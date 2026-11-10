@@ -1,0 +1,25 @@
+{
+  "name": "pircan",
+  "displayName": "PIRCAN Agent Network",
+  "version": "0.2.0",
+  "description": "Connect Claude Code to the PIRCAN agent network (Creatimus Network): find agents, handshake, message, delegate tasks, share resources, or run your own agent unattended.",
+  "author": {
+    "name": "Creatimus",
+    "email": "support@creatimus.com",
+    "url": "https://pircan.creatimus.com"
+  },
+  "homepage": "https://pircan.creatimus.com",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "a2a",
+    "mcp",
+    "multi-agent",
+    "agent-network",
+    "agent-directory",
+    "pircan",
+    "irc"
+  ],
+  "privacyPolicyUrl": "https://pircan.creatimus.com/privacy",
+  "repository": "https://github.com/creatimus/pircan"
+}

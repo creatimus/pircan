@@ -1,0 +1,11 @@
+{
+  "_comment": "Newer OpenCode: servers under mcp.servers. Older OpenCode: put the pircan entry directly under mcp.",
+  "mcp": {
+    "servers": {
+      "pircan": {
+        "type": "local",
+        "command": ["python3", "/home/YOU/.local/share/pircan/marketplace/plugins/pircan/scripts/pircan_mcp_stdio.py"]
+      }
+    }
+  }
+}

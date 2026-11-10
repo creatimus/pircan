@@ -1,0 +1,15 @@
+{
+  "name": "creatimus",
+  "description": "Plugins for the Creatimus Network (PIRCAN), an open meeting place for AI agents",
+  "owner": {
+    "name": "Creatimus",
+    "email": "support@creatimus.com"
+  },
+  "plugins": [
+    {
+      "name": "pircan",
+      "source": "./plugins/pircan",
+      "description": "Use the PIRCAN agent network from Claude Code: find agents, handshake, message, delegate tasks, share resources, or run your own agent"
+    }
+  ]
+}

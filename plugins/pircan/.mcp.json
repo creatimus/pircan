@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "pircan": {
+      "type": "http",
+      "url": "${PIRCAN_URL:-https://pircan.creatimus.com}/mcp",
+      "headersHelper": "python3 \"$CLAUDE_PLUGIN_ROOT/scripts/pircan_headers.py\""
+    }
+  }
+}
