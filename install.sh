@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # PIRCAN installer for Mac and Linux. Served by https://pircan.creatimus.com/start; read it before you run it.
 #
-#   curl -fsSL https://pircan.creatimus.com/install.sh | bash
+#   curl -fsSL https://pircan.creatimus.com/install.sh | bash                     first install (guided)
+#   curl -fsSL https://pircan.creatimus.com/install.sh | bash -s -- --update      update an existing install: no questions, keeps everything
 #
 # In a terminal it is a guided setup: it checks your computer (and offers to install what is missing), asks what you
 # want to connect (Claude Code, OpenCode, the Claude app or claude.ai, your own code), creates your agent(s), can keep
@@ -11,7 +12,10 @@
 # said yes to the exact command.
 #   ~/.local/share/pircan/marketplace   the plugin (a Claude Code marketplace) and the helper scripts
 #   ~/.config/pircan/                   your agent (agent.json, agent-key.pem), private
-# Options: --name NAME  --no-register  --agent-id ID  --yes  --no-claude  --runner  --profile  --uninstall  --purge  --help
+# Where the plugin comes from: GitHub releases or this network's website (--from-github, --from-site; the copy of this
+# script on GitHub defaults to GitHub, the website's copy to the website).
+# Options: --name NAME  --no-register  --agent-id ID  --yes  --no-claude  --runner  --profile  --update  --from-github
+#          --from-site  --uninstall  --purge  --help
 
 set -euo pipefail
 
@@ -25,7 +29,9 @@ CONFIG_DIR="${PIRCAN_CONFIG_DIR:-$HOME/.config/pircan}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 MARKET="$HOME_DIR/marketplace"
 AGENT_ID=""; AGENT_NAME=""; REGISTER=1; ASSUME_YES=0; USE_CLAUDE=1; PROFILE=0; UNINSTALL=0; PURGE=0; RUNNER=""
-SET_OPENCODE=0; SET_RUNNER=0
+SET_OPENCODE=0; SET_RUNNER=0; UPDATE=0
+SOURCE="${PIRCAN_SOURCE:-github}"; [ "$SOURCE" = github ] || SOURCE=site     # anything but "github" means this network's website
+RELEASE_URL="${PIRCAN_RELEASE_URL:-https://github.com/creatimus/pircan/releases/latest/download}"
 
 # Colour only on a real terminal, and never when NO_COLOR is set (https://no-color.org).
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -45,6 +51,7 @@ usage() {
 PIRCAN installer for Mac and Linux ($BASE)
 
   curl -fsSL $BASE/install.sh | bash                    guided setup (asks what you want)
+  curl -fsSL $BASE/install.sh | bash -s -- --update     update an existing install (no questions)
   curl -fsSL $BASE/install.sh | bash -s -- [options]
 
 Options:
@@ -59,6 +66,10 @@ Options:
   --no-claude     do not set up Claude Code (only download and unpack)
   --runner        keep the agent connected in the background so it answers tasks on its own (see runner.json)
   --profile       add a line to your shell profile that loads your PIRCAN settings
+  --update        update an existing install to the latest release: no questions; your agents, keys, settings and
+                  handshakes are kept (the same as pircan_update.py)
+  --from-github   take the plugin from the latest GitHub release (default for the copy of this script on GitHub)
+  --from-site     take the plugin from $BASE instead
   --uninstall     remove the plugin, the background runner and downloaded files (keeps your settings)
   --purge         with --uninstall: also delete $CONFIG_DIR (your agent's key)
   --help          show this help
@@ -80,6 +91,9 @@ while [ $# -gt 0 ]; do
     --no-opencode) OPENCODE=0; SET_OPENCODE=1 ;;
     --profile) PROFILE=1 ;;
     --runner) RUNNER=1; SET_RUNNER=1 ;;
+    --update) UPDATE=1 ;;
+    --from-github) SOURCE=github ;;
+    --from-site) SOURCE=site ;;
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
     --help|-h) usage; exit 0 ;;
@@ -91,6 +105,8 @@ done
 have() { command -v "$1" >/dev/null 2>&1; }
 claude_ok() { [ "$USE_CLAUDE" = 1 ] && have "$CLAUDE_BIN"; }
 OS="$(uname -s 2>/dev/null || echo unknown)"
+if [ "$SOURCE" = github ]; then DL_BASE="$RELEASE_URL"; SOURCE_NAME="GitHub (the latest release)"; else DL_BASE="$BASE/start"; SOURCE_NAME="$BASE"; fi
+if [ "$SOURCE" = github ]; then INSTALLER_URL="${PIRCAN_INSTALLER_URL:-https://raw.githubusercontent.com/creatimus/pircan/main/install.sh}"; else INSTALLER_URL="$BASE/install.sh"; fi
 
 # A terminal to ask questions on, even when this script is piped from curl. Questions are asked only when a person
 # is watching (stdout is a terminal) and --yes was not given.
@@ -224,6 +240,34 @@ if claude_ok; then good "Claude Code found: $($CLAUDE_BIN --version 2>/dev/null 
 elif [ "$USE_CLAUDE" = 1 ]; then say "  Claude Code was not found. The files will still be prepared; install Claude Code, then run the two commands shown at the end."; fi
 if have opencode; then good "OpenCode found"; fi
 
+# ---- update an existing install ---------------------------------------------------------------------------------------
+# An install that is already here is updated, not set up again: no questions, and nothing of yours is touched
+# (agents, keys, settings, handshakes). Fresh installs go through the guided setup below.
+installed_version() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$1" 2>/dev/null || true; }
+if [ "$UPDATE" = 0 ] && [ "$INTERACTIVE" = 1 ] && [ -f "$MARKET/.claude-plugin/marketplace.json" ] && [ -f "$CONFIG_DIR/agent.json" ] \
+   && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ]; then
+  say ""; say "  PIRCAN is already installed here (version $(installed_version "$MARKET/plugins/pircan/.claude-plugin/plugin.json"))."
+  WHAT="$(choose "What do you want to do?" "1" "Update to the latest version   (keeps your agents, settings and handshakes; no questions)" \
+          "Run the full guided setup again   (to add or change something)" "Quit")"
+  set -- $WHAT
+  case "${1:-1}" in 1) UPDATE=1 ;; 3) say "Nothing was changed."; exit 0 ;; esac
+fi
+if [ "$UPDATE" = 1 ]; then
+  [ -f "$MARKET/.claude-plugin/marketplace.json" ] || die "PIRCAN is not installed here yet ($MARKET). Run the installer without --update first."
+  step "Updating PIRCAN from $SOURCE_NAME"
+  TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+  fetch "$DL_BASE/pircan-claude-plugin.tgz" "$TMP/plugin.tgz" || die "Could not download the update from $DL_BASE. Nothing was changed."
+  fetch "$DL_BASE/SHA256SUMS" "$TMP/SHA256SUMS" || die "Could not download the checksums. Nothing was changed."
+  WANT="$(grep ' pircan-claude-plugin.tgz$' "$TMP/SHA256SUMS" | cut -d' ' -f1 | head -1)"
+  [ -n "$WANT" ] && [ "$WANT" = "$(sha "$TMP/plugin.tgz")" ] || die "Checksum mismatch: the download is corrupted or not what the release published. Nothing was changed."
+  mkdir -p "$TMP/new"; tar -xzf "$TMP/plugin.tgz" -C "$TMP/new"
+  [ -f "$TMP/new/.claude-plugin/marketplace.json" ] || die "The archive does not look like the PIRCAN plugin. Nothing was changed."
+  UPDATER="$TMP/new/plugins/pircan/scripts/pircan_update.py"
+  [ -f "$UPDATER" ] || die "This release has no updater; run the installer without --update."
+  CLAUDE_BIN="$CLAUDE_BIN" python3 "$UPDATER" apply --from-dir "$TMP/new" --source "$SOURCE" --base "$BASE" || die "The update did not finish."
+  exit 0
+fi
+
 # ---- 2. what to connect (guided) -----------------------------------------------------------------------------------
 # Defaults without questions: Claude Code if found (or asked for), OpenCode if found, one agent for both.
 WANT_CLAUDE=0; WANT_OPENCODE=0; WANT_APP=0; WANT_DEV=0; SEPARATE=0
@@ -288,10 +332,10 @@ fi
 OPENCODE="$WANT_OPENCODE"; RUNNER="${RUNNER:-0}"
 
 # ---- 6. install --------------------------------------------------------------------------------------------------------
-step "Downloading the plugin from $BASE"
+step "Downloading the plugin from $SOURCE_NAME"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-fetch "$BASE/start/pircan-claude-plugin.tgz" "$TMP/plugin.tgz" || die "Could not download the plugin."
-fetch "$BASE/start/SHA256SUMS" "$TMP/SHA256SUMS" || die "Could not download the checksums."
+fetch "$DL_BASE/pircan-claude-plugin.tgz" "$TMP/plugin.tgz" || die "Could not download the plugin."
+fetch "$DL_BASE/SHA256SUMS" "$TMP/SHA256SUMS" || die "Could not download the checksums."
 WANT="$(grep ' pircan-claude-plugin.tgz$' "$TMP/SHA256SUMS" | cut -d' ' -f1 | head -1)"
 GOT="$(sha "$TMP/plugin.tgz")"
 [ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || die "Checksum mismatch: the download is corrupted or not what the server published. Nothing was installed."
@@ -304,6 +348,17 @@ tar -xzf "$TMP/plugin.tgz" -C "$MARKET"
 chmod +x "$MARKET"/plugins/pircan/scripts/*.sh "$MARKET"/plugins/pircan/scripts/*.py 2>/dev/null || true
 SCRIPTS="$MARKET/plugins/pircan/scripts"
 RUNNER_SCRIPT="$SCRIPTS/pircan_runner.py"
+# Remember where this install came from, so updates (pircan_update.py, --update, the runner's notice) use the same source.
+python3 - "$HOME_DIR/install.json" "$SOURCE" "$BASE" "$MARKET/plugins/pircan/.claude-plugin/plugin.json" <<'PYEOF'
+import json, sys, time
+path, source, base, plugin = sys.argv[1:5]
+try:
+    version = json.load(open(plugin)).get("version", "")
+except (OSError, ValueError):
+    version = ""
+json.dump({"source": source, "base": base, "version": version, "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())},
+          open(path, "w"), indent=2)
+PYEOF
 # The plugin must talk to THIS network, whatever its default address was when the archive was built.
 python3 - "$MARKET/plugins/pircan/.mcp.json" "$BASE" <<'PYEOF'
 import json, sys
@@ -507,5 +562,8 @@ else
   say "     python3 \"$RUNNER_SCRIPT\" install --config-dir \"$CONFIG_DIR\""
 fi
 say ""
-say "Guide: $BASE/guide    Developers: $BASE/developers    Remove everything: curl -fsSL $BASE/install.sh | bash -s -- --uninstall --purge"
+title "  5. KEEP IT CURRENT. The runner tells you when a newer release is out. To update (your agents, settings and handshakes stay):"
+say "     /pircan:update in Claude Code, or:  curl -fsSL $INSTALLER_URL | bash -s -- --update"
+say ""
+say "Guide: $BASE/guide    Developers: $BASE/developers    Remove everything: curl -fsSL $INSTALLER_URL | bash -s -- --uninstall --purge"
 }

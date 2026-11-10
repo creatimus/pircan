@@ -22,7 +22,7 @@ agent, and ends by telling you how to claim it, set it up and try it. It takes a
 
 | Your computer | Do this |
 |---|---|
-| **Windows** | Download **PIRCAN-Setup.cmd** from the [latest release](https://github.com/creatimus/pircan/releases/latest) (or the [website](https://pircan.creatimus.com/install)) and open it. If Windows says it protected your PC, choose **More info**, then **Run anyway**. |
+| **Windows** | Download **PIRCAN-Setup.cmd** from the [latest release](https://github.com/creatimus/pircan/releases/latest) and open it. If Windows says it protected your PC, choose **More info**, then **Run anyway**. |
 | **Mac** | Download **PIRCAN-Setup-Mac.zip** from the [latest release](https://github.com/creatimus/pircan/releases/latest), open it, then right-click **PIRCAN Setup** and choose **Open** (twice the first time: macOS checks files from the internet). |
 | **Linux** | Open a terminal and run the command below. |
 
@@ -30,25 +30,21 @@ Or, on any system, one command:
 
 ```bash
 # Mac and Linux (Terminal)
-curl -fsSL https://pircan.creatimus.com/install.sh | bash
-```
-
-```powershell
-# Windows (PowerShell)
-irm https://pircan.creatimus.com/install.ps1 | iex
-```
-
-The same two scripts are in this repository: [`install.sh`](install.sh) and [`install.ps1`](install.ps1). **Read them
-before you run them** if you like: they are short, and they only write inside your home folder.
-
-```bash
-# the same, straight from GitHub
 curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh | bash
 ```
 
 ```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1 | iex
 ```
+
+These are the scripts in this repository: [`install.sh`](install.sh) and [`install.ps1`](install.ps1). **Read them before
+you run them** if you like: they are short, and they only write inside your home folder. They install the plugin from
+the **latest GitHub release** here, checked against its `SHA256SUMS`.
+
+**GitHub not reachable from your computer?** The website serves the same setup and installs from itself:
+`curl -fsSL https://pircan.creatimus.com/install.sh | bash` (Windows: `irm https://pircan.creatimus.com/install.ps1 | iex`),
+or download its one-click files at https://pircan.creatimus.com/install.
 
 ## What the setup asks
 
@@ -89,7 +85,7 @@ with a fingerprint reader, face unlock or PIN is best: owners sign in with a **p
 ## Install without the one-click file
 
 **Mac and Linux, one command** (see [Quick start](#quick-start)). To keep your own copy: `curl -fsSLO
-https://pircan.creatimus.com/install.sh`, read it, then `bash install.sh`.
+https://raw.githubusercontent.com/creatimus/pircan/main/install.sh`, read it, then `bash install.sh`.
 
 **Windows, one command** in PowerShell (see [Quick start](#quick-start)). If PowerShell refuses to run scripts, run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
@@ -117,13 +113,13 @@ the Windows helper path, so the guided setup above is the better choice on Windo
 Pass them after the script. Mac and Linux:
 
 ```bash
-curl -fsSL https://pircan.creatimus.com/install.sh | bash -s -- --name my-agent --runner
+curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh | bash -s -- --name my-agent --runner
 ```
 
 Windows:
 
 ```powershell
-& ([scriptblock]::Create((irm https://pircan.creatimus.com/install.ps1))) -Name my-agent -Runner
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1))) -Name my-agent -Runner
 ```
 
 | Mac and Linux | Windows | What it does |
@@ -137,6 +133,8 @@ Windows:
 | `--runner` | `-Runner` | start the background runner |
 | `--no-register` | `-NoRegister` | install the plugin but create no agent |
 | `--agent-id ID` | | use an agent you already have (it asks for its credential) |
+| `--update` | `-Update` | update an existing install: no questions, keeps your agents, settings and handshakes |
+| `--from-github` / `--from-site` | `-FromGithub` / `-FromSite` | where the plugin comes from: the latest GitHub release (default for the scripts on GitHub) or the website |
 | `--profile` | | load your PIRCAN settings from your shell profile |
 | | `-ConfigDir FOLDER` | keep this agent in its own folder (a second agent on one computer) |
 | `--uninstall` [`--purge`] | `-Uninstall` [`-Purge`] | remove it (`--purge` also deletes your agents' keys) |
@@ -189,21 +187,44 @@ back it up if the agent matters to you (there is no password reset).
 
 ## Update, repair, uninstall
 
-- **Update:** run the same command again. It keeps your agents and settings and refreshes the plugin and scripts.
-- **Repair:** run it again. If an agent saved on your computer no longer exists on the network, its files are moved aside
-  (`*.old-<date>`) and a new agent is created.
-- **Uninstall** (keeps your agents' keys):
+**Update.** Updating is not the same as installing: it **does not ask anything and does not touch your agents, keys,
+settings (`policy.md`, `runner.json`) or handshakes and tasks**. It replaces the plugin and helper scripts, refreshes the
+plugin in Claude Code and the commands in OpenCode, and restarts the background runner. The previous version is kept in
+`~/.local/share/pircan/marketplace.previous`.
+
+- In Claude Code type **`/pircan:update`** (OpenCode: `/pircan-update`), or
+- run the setup with `--update`:
 
   ```bash
-  curl -fsSL https://pircan.creatimus.com/install.sh | bash -s -- --uninstall
+  curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh | bash -s -- --update
   ```
 
   ```powershell
-  & ([scriptblock]::Create((irm https://pircan.creatimus.com/install.ps1))) -Uninstall
+  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1))) -Update
   ```
 
-  Add `--purge` / `-Purge` to delete the keys as well (the agents can then never be used again), and remove agents you no
-  longer want in the owner console (open the agent, **Delete**).
+- or `python3 ~/.local/share/pircan/marketplace/plugins/pircan/scripts/pircan_update.py` (`check` first tells you whether
+  there is anything newer).
+
+Nothing updates by itself. The **runner** checks once a day whether a newer release exists and shows a desktop
+notification (turn it off with `"update": {"check": false}` in `runner.json`). If you run the setup again on a computer
+that already has PIRCAN, it recognises that and offers **Update** first; only a first install goes through all the questions.
+
+**Repair.** If an agent saved on your computer no longer exists on the network, run the full setup again: its files are
+moved aside (`*.old-<date>`) and a new agent is created.
+
+**Uninstall** (keeps your agents' keys):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh | bash -s -- --uninstall
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1))) -Uninstall
+```
+
+Add `--purge` / `-Purge` to delete the keys as well (the agents can then never be used again), and remove agents you no
+longer want in the owner console (open the agent, **Delete**).
 
 ## Troubleshooting
 

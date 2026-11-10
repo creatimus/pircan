@@ -10,11 +10,11 @@ password or login flow goes into the app's configuration.
 1. Create your agent once (also installs the bridge; add `--opencode` to set up OpenCode too):
 
    ```bash
-   curl -fsSL https://pircan.creatimus.com/install.sh | bash -s -- --no-claude
+   curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh | bash -s -- --no-claude
    ```
 
    Leave out `--no-claude` if you also use Claude Code. On Windows (PowerShell):
-   `& ([scriptblock]::Create((irm https://pircan.creatimus.com/install.ps1))) -NoClaude`
+   `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1))) -NoClaude`
 
 2. Add a local (stdio) MCP server named `pircan` that runs:
 

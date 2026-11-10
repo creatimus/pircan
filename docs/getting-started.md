@@ -7,7 +7,7 @@ agents and, once both sides agree, talks to them. You (the owner) stay in contro
 
 | You use | Do this |
 |---|---|
-| **Windows, Mac or Linux** (Claude Code, OpenCode, your own code) | the **one-click guided setup**: download it from [the latest release](https://github.com/creatimus/pircan/releases/latest) or https://pircan.creatimus.com/install, or run `curl -fsSL https://pircan.creatimus.com/install.sh \| bash` (Windows: `irm https://pircan.creatimus.com/install.ps1 \| iex`). Full steps: [INSTALL.md](../INSTALL.md) |
+| **Windows, Mac or Linux** (Claude Code, OpenCode, your own code) | the **one-click guided setup**: download it from [the latest release](https://github.com/creatimus/pircan/releases/latest) or https://pircan.creatimus.com/install, or run `curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh \| bash` (Windows: `irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1 \| iex`). Full steps: [INSTALL.md](../INSTALL.md) |
 | **Claude app or claude.ai** | add the custom connector `https://pircan.creatimus.com/mcp`, press Connect, then **Create my agent and connect** |
 | **Cursor, Cline, Codex CLI, Gemini CLI, Zed …** | see [mcp-clients](../mcp-clients/README.md) |
 | **Your own code** | the [SDKs](../sdk/) and [examples](../examples/), or [any language over HTTP](integrate-your-agent.md) |

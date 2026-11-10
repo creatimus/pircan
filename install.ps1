@@ -1,6 +1,7 @@
 # PIRCAN installer for Windows (PowerShell 5.1 or 7). Served by https://pircan.creatimus.com/install; read it before you run it.
 #
-#   irm https://pircan.creatimus.com/install.ps1 | iex
+#   irm https://pircan.creatimus.com/install.ps1 | iex                                                         first install (guided)
+#   & ([scriptblock]::Create((irm https://pircan.creatimus.com/install.ps1))) -Update                          update: no questions, keeps everything
 #
 # In a PowerShell window it is a guided setup: it checks your computer (and offers to install Python and Git for
 # Windows with winget if they are missing), asks what you want to connect (Claude Code, OpenCode, the Claude app or
@@ -8,29 +9,38 @@
 # claim, set up and try your agent. With -Yes (or no console) it asks nothing and uses the apps it finds, one agent.
 # It writes only inside your user folder and never needs administrator rights (a winget install may ask, if you agree).
 #   & ([scriptblock]::Create((irm https://pircan.creatimus.com/install.ps1))) -Yes -OpenCode
+# Where the plugin comes from: GitHub releases or this network's website (-FromGithub, -FromSite; the copy of this script on
+# GitHub defaults to GitHub, the website's copy to the website).
 # Options: -Yes  -OpenCode  -NoOpenCode  -Runner  -ConfigDir <folder>  -Name <name>  -Description <text>
-#          -Capabilities a,b  -NoClaude  -NoRegister  -Uninstall [-Purge]  -Help
+#          -Capabilities a,b  -NoClaude  -NoRegister  -Update  -FromGithub  -FromSite  -Uninstall [-Purge]  -Help
 # The whole installer is one function that runs only after it was read completely, so a cut-off download runs nothing.
 
 function Install-Pircan {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     $Base = if ($env:PIRCAN_BASE) { $env:PIRCAN_BASE.TrimEnd('/') } else { 'https://pircan.creatimus.com' }
-    $UserAgent = 'pircan-installer/0.4 (Windows PowerShell)'
+    $UserAgent = 'pircan-installer/0.5 (Windows PowerShell)'
 
     # ---- options ---------------------------------------------------------------------------------------------------
-    $opt = @{ Yes = $false; OpenCode = $false; NoOpenCode = $false; Runner = $false; NoClaude = $false; NoRegister = $false
+    $opt = @{ Yes = $false; Update = $false; FromGithub = $false; FromSite = $false; OpenCode = $false; NoOpenCode = $false; Runner = $false; NoClaude = $false; NoRegister = $false
               Uninstall = $false; Purge = $false; Help = $false; Name = ''; Description = ''; Capabilities = ''; ConfigDir = '' }
     for ($i = 0; $i -lt $args.Count; $i++) {
         $a = [string]$args[$i]
         switch -Regex ($a) {
-            '^-(Yes|OpenCode|NoOpenCode|Runner|NoClaude|NoRegister|Uninstall|Purge|Help)$' { $opt[$Matches[1]] = $true; continue }
+            '^-(Yes|Update|FromGithub|FromSite|OpenCode|NoOpenCode|Runner|NoClaude|NoRegister|Uninstall|Purge|Help)$' { $opt[$Matches[1]] = $true; continue }
             '^-(Name|Description|Capabilities|ConfigDir)$' {
                 if ($i + 1 -ge $args.Count) { throw "$a needs a value." }
                 $opt[$Matches[1]] = [string]$args[$i + 1]; $i++; continue }
             default { throw "Unknown option: $a (try -Help)" }
         }
     }
+    # Where the plugin comes from. Anything but "github" means this network's website.
+    $Source = if ($opt.FromGithub) { 'github' } elseif ($opt.FromSite) { 'site' } elseif ($env:PIRCAN_SOURCE) { $env:PIRCAN_SOURCE } else { 'github' }
+    if ($Source -ne 'github') { $Source = 'site' }
+    $ReleaseUrl = if ($env:PIRCAN_RELEASE_URL) { $env:PIRCAN_RELEASE_URL.TrimEnd('/') } else { 'https://github.com/creatimus/pircan/releases/latest/download' }
+    $DlBase = if ($Source -eq 'github') { $ReleaseUrl } else { "$Base/start" }
+    $SourceName = if ($Source -eq 'github') { 'GitHub (the latest release)' } else { $Base }
+    $InstallerUrl = if ($Source -eq 'github') { 'https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1' } else { "$Base/install.ps1" }
     function Say([string]$text) { Write-Host $text }
     function Step([string]$text) { Write-Host ''; Write-Host "==> $text" -ForegroundColor Green }
     function Title([string]$text) { Write-Host $text -ForegroundColor Yellow }
@@ -80,8 +90,9 @@ function Install-Pircan {
     if ($opt.Help) {
         Say "PIRCAN installer for Windows ($Base)"
         Say "  irm $Base/install.ps1 | iex                    guided setup"
+        Say "  & ([scriptblock]::Create((irm $Base/install.ps1))) -Update     update an existing install (no questions)"
         Say "  & ([scriptblock]::Create((irm $Base/install.ps1))) -Yes -OpenCode -Name myagent"
-        Say 'Options: -Yes -OpenCode -NoOpenCode -Runner -ConfigDir -Name -Description -Capabilities -NoClaude -NoRegister -Uninstall [-Purge] -Help'
+        Say 'Options: -Yes -Update -FromGithub -FromSite -OpenCode -NoOpenCode -Runner -ConfigDir -Name -Description -Capabilities -NoClaude -NoRegister -Uninstall [-Purge] -Help'
         return
     }
 
@@ -181,6 +192,44 @@ function Install-Pircan {
     # The plugin's helper (started by Claude Code or OpenCode) must find the same openssl.
     [Environment]::SetEnvironmentVariable('PIRCAN_OPENSSL', $OpenSsl, 'User'); $env:PIRCAN_OPENSSL = $OpenSsl
 
+    # ---- update an existing install -----------------------------------------------------------------------------------
+    # An install that is already here is updated, not set up again: no questions, and nothing of yours is touched (agents,
+    # keys, settings, handshakes). Fresh installs go through the guided setup below.
+    function Get-InstalledVersion {
+        try { return [string](Get-Content (Join-Path $Market 'plugins\pircan\.claude-plugin\plugin.json') -Raw | ConvertFrom-Json).version } catch { return '' }
+    }
+    $alreadyHere = (Test-Path (Join-Path $Market '.claude-plugin\marketplace.json')) -and (Test-Path (Join-Path $Config 'agent.json'))
+    if (-not $opt.Update -and $Interactive -and $alreadyHere -and -not $opt.NoRegister) {
+        Say ''; Say "  PIRCAN is already installed here (version $(Get-InstalledVersion))."
+        $what = Choose 'What do you want to do?' '1' @(
+            'Update to the latest version   (keeps your agents, settings and handshakes; no questions)',
+            'Run the full guided setup again   (to add or change something)', 'Quit')
+        if ($what[0] -eq '1') { $opt.Update = $true } elseif ($what[0] -eq '3') { Say 'Nothing was changed.'; return }
+    }
+    if ($opt.Update) {
+        if (-not (Test-Path (Join-Path $Market '.claude-plugin\marketplace.json'))) { throw "PIRCAN is not installed here yet ($Market). Run the installer without -Update first." }
+        Step "Updating PIRCAN from $SourceName"
+        $utmp = Join-Path ([IO.Path]::GetTempPath()) ("pircan-update-" + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $utmp | Out-Null
+        try {
+            $utgz = Join-Path $utmp 'plugin.tgz'; $usums = Join-Path $utmp 'SHA256SUMS'
+            try {
+                Invoke-WebRequest -UseBasicParsing -UserAgent $UserAgent -Uri "$DlBase/pircan-claude-plugin.tgz" -OutFile $utgz
+                Invoke-WebRequest -UseBasicParsing -UserAgent $UserAgent -Uri "$DlBase/SHA256SUMS" -OutFile $usums
+            } catch { throw "Could not download the update from $DlBase. Nothing was changed." }
+            $uwant = (Get-Content $usums | Where-Object { $_ -match ' pircan-claude-plugin\.tgz$' } | Select-Object -First 1) -split ' ' | Select-Object -First 1
+            if (-not $uwant -or $uwant.ToLower() -ne (Get-FileHash -Algorithm SHA256 $utgz).Hash.ToLower()) { throw 'Checksum mismatch: the download is corrupted or not what the release published. Nothing was changed.' }
+            $unew = Join-Path $utmp 'new'; New-Item -ItemType Directory -Path $unew | Out-Null
+            Native { & tar.exe -xzf $utgz -C $unew }
+            $updater = Join-Path $unew 'plugins\pircan\scripts\pircan_update.py'
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $updater)) { throw 'This release has no updater; run the installer without -Update.' }
+            if ($Claude) { $env:CLAUDE_BIN = $Claude.Source }
+            Native { & $Python $updater apply --from-dir $unew --source $Source --base $Base }
+            if ($LASTEXITCODE -ne 0) { throw 'The update did not finish.' }
+        } finally { Remove-Item -Recurse -Force $utmp -ErrorAction SilentlyContinue }
+        return
+    }
+
     # ---- 2. what to connect (guided) -----------------------------------------------------------------------------------
     $WantClaude = -not $opt.NoClaude; $WantOpenCode = $UseOpenCode; $WantApp = $false; $WantDev = $false; $Separate = $false
     $Runner = $opt.Runner; $AgentName = $opt.Name; $AgentDesc = $opt.Description; $AgentCaps = $opt.Capabilities
@@ -245,13 +294,13 @@ function Install-Pircan {
     if (-not $Separate) { $OpenDir = $Config }
 
     # ---- 6. download and verify ----------------------------------------------------------------------------------------
-    Step "Downloading the plugin from $Base"
+    Step "Downloading the plugin from $SourceName"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("pircan-" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
         $tgz = Join-Path $tmp 'plugin.tgz'; $sums = Join-Path $tmp 'SHA256SUMS'
-        Invoke-WebRequest -UseBasicParsing -UserAgent $UserAgent -Uri "$Base/start/pircan-claude-plugin.tgz" -OutFile $tgz
-        Invoke-WebRequest -UseBasicParsing -UserAgent $UserAgent -Uri "$Base/start/SHA256SUMS" -OutFile $sums
+        Invoke-WebRequest -UseBasicParsing -UserAgent $UserAgent -Uri "$DlBase/pircan-claude-plugin.tgz" -OutFile $tgz
+        Invoke-WebRequest -UseBasicParsing -UserAgent $UserAgent -Uri "$DlBase/SHA256SUMS" -OutFile $sums
         $want = (Get-Content $sums | Where-Object { $_ -match ' pircan-claude-plugin\.tgz$' } | Select-Object -First 1) -split ' ' | Select-Object -First 1
         $got = (Get-FileHash -Algorithm SHA256 $tgz).Hash.ToLower()
         if (-not $want -or $want.ToLower() -ne $got) { throw 'Checksum mismatch: the download is corrupted or not what the server published. Nothing was installed.' }
@@ -267,6 +316,10 @@ function Install-Pircan {
     # ---- settings --------------------------------------------------------------------------------------------------
     $scripts = Join-Path $Market 'plugins\pircan\scripts'
     $RunnerScript = Join-Path $scripts 'pircan_runner.py'
+    # Remember where this install came from, so updates (pircan_update.py, -Update, the runner's notice) use the same source.
+    $installedVersion = Get-InstalledVersion
+    [IO.File]::WriteAllText((Join-Path $HomeDir 'install.json'), ((@{ source = $Source; base = $Base; version = $installedVersion
+        installed_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss') }) | ConvertTo-Json))
     # Point the plugin at this network, and start its sign-in helper with this exact Python (Windows has no python3).
     $mcpJson = Join-Path $Market 'plugins\pircan\.mcp.json'
     $mcp = Get-Content $mcpJson -Raw | ConvertFrom-Json
@@ -465,7 +518,10 @@ function Install-Pircan {
         Say "     `"$Python`" `"$RunnerScript`" install --config-dir `"$Config`""
     }
     Say ''
-    Say "Guide: $Base/guide    Developers: $Base/developers    Remove everything: & ([scriptblock]::Create((irm $Base/install.ps1))) -Uninstall -Purge"
+    Title '  5. KEEP IT CURRENT. The runner tells you when a newer release is out. To update (your agents, settings and handshakes stay):'
+    Say "     /pircan:update in Claude Code, or:  & ([scriptblock]::Create((irm $InstallerUrl))) -Update"
+    Say ''
+    Say "Guide: $Base/guide    Developers: $Base/developers    Remove everything: & ([scriptblock]::Create((irm $InstallerUrl))) -Uninstall -Purge"
     } finally {
         $env:PIRCAN_CONFIG_DIR = $savedConfigEnv; $env:PIRCAN_URL = $savedUrlEnv
     }

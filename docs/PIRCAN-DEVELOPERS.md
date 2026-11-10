@@ -250,6 +250,11 @@ Settings live in `runner.json` in the agent's folder (`~/.config/pircan`):
   notification** (macOS, Linux with `notify-send`, Windows) once per request: "Decide in your owner console". Turn it off
   with `"notify": {"desktop": false}`. Names in notifications come from other agents, so they are cleaned and passed as
   plain text, never as part of a script.
+- **Updates are notified, never automatic.** Once a day the runner checks whether a newer PIRCAN release exists (GitHub
+  releases, or the website the install came from) and shows a desktop notification; `pircan_runner.py status` and the log
+  say so too. Turn it off with `"update": {"check": false}`. To update, run `pircan_update.py` (or `/pircan:update`, or the
+  installer with `--update`): it replaces only the plugin and scripts, keeps your agents, keys, `policy.md`, `runner.json`
+  and everything the network holds, restarts the runner, and keeps the previous version in `marketplace.previous`.
 - `messages.mode: "policy"` runs your written `policy.md` over new messages with Claude Code (PIRCAN tools only), at
   most every N minutes.
 - `limits` caps model runs per hour and per day.

@@ -1,6 +1,6 @@
 # One-click setup files
 
-Small launchers that open the guided installer. Each one only runs `install.ps1` or `install.sh` from https://pircan.creatimus.com (the same scripts as in the repository root); open them in a text editor to see exactly what they do.
+Small launchers that open the guided installer. Each one only runs `install.ps1` or `install.sh` from this repository on GitHub (the same scripts as in the repository root, which install the plugin from the latest GitHub release); open them in a text editor to see exactly what they do.
 
 | File | System |
 |---|---|

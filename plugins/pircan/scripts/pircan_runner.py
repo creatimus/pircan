@@ -7,6 +7,7 @@
     pircan_runner.py status       is it running, what did it do last
     pircan_runner.py install      run it in the background, from login (launchd, systemd --user, Task Scheduler)
     pircan_runner.py uninstall    remove the background service (keeps runner.json)
+    pircan_runner.py stop|restart stop, or restart, the background service if it is installed (the updater uses these)
     pircan_runner.py logs         the last lines of its log
   --config-dir DIR   the agent's folder (default ~/.config/pircan, or PIRCAN_CONFIG_DIR)
 
@@ -20,7 +21,9 @@ What it does, with no model running while it waits:
     a task for any other skill is rejected with a short reason;
   * accepts contact requests only from the agents you list, for the scopes you allow; others wait for you, and you get a
     desktop notification ("notify": {"desktop": false} in runner.json turns it off);
-  * optionally runs your written policy (policy.md) over new messages with Claude Code, at most every N minutes.
+  * optionally runs your written policy (policy.md) over new messages with Claude Code, at most every N minutes;
+  * once a day checks whether a newer PIRCAN release exists and only tells you ("update": {"check": false} turns it off);
+    it never updates itself: run pircan_update.py (or /pircan:update, or the installer with --update).
 Everything other agents send is untrusted data: workers get it as data, never as instructions.
 Limits (runs per hour and day, timeout, concurrency) keep a busy network from spending your model budget.
 Standard library only (Python 3.8+). Never prints credentials.
@@ -58,6 +61,7 @@ DEFAULT_CONFIG = {
     "messages": {"mode": "report", "every_minutes": 10},
     "limits": {"concurrency": 1, "runs_per_hour": 20, "runs_per_day": 100, "task_timeout_seconds": 600},
     "notify": {"desktop": True},
+    "update": {"check": True},                  # once a day: tell me (never install by itself) when a newer release exists
     "claude": {"bin": "", "model": "sonnet", "max_turns": 8},
 }
 SKILL_EXAMPLES = {
@@ -99,6 +103,24 @@ def load_config(path: Path | None = None) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+UPDATE_CHECK_EVERY = 24 * 3600
+
+
+def installed_plugin_version() -> str:
+    try:
+        return str(json.loads((PLUGIN_DIR / ".claude-plugin" / "plugin.json").read_text()).get("version", ""))
+    except (OSError, ValueError):
+        return ""
+
+
+def parse_version(text) -> tuple:
+    parts = []
+    for piece in str(text or "").strip().lstrip("vV").split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
 
 
 def clean_label(text, limit: int = 60) -> str:
@@ -453,9 +475,11 @@ def command_result(outcome: str, text: str) -> tuple[str, str]:
 # ---- the runner ---------------------------------------------------------------------------------------------------
 
 class Runner:
-    def __init__(self, client, config: dict, state: State, log, *, run_program=run_program, notify=desktop_notify):
+    def __init__(self, client, config: dict, state: State, log, *, run_program=run_program, notify=desktop_notify,
+                 latest_version=None, installed_version=installed_plugin_version, clock=time.time):
         self.client, self.config, self.state, self.log = client, config, state, log
         self.run_program, self.notify = run_program, notify
+        self.latest_version, self.installed_version, self.clock = latest_version, installed_version, clock
         limits = config["limits"]
         self.pool = ThreadPoolExecutor(max_workers=max(1, int(limits.get("concurrency") or 1)))
         self.running: dict[str, threading.Event] = {}
@@ -618,6 +642,39 @@ class Runner:
         outcome, report = self.run_program(command, "", int(self.config["limits"]["task_timeout_seconds"]))
         self.log(f"policy pass: {outcome}: {' '.join(report.split())[:400]}")
 
+    def check_for_update(self) -> bool:
+        """At most once a day: is a newer release out? Only tells the owner (a log line, a notification, `status`);
+        never downloads or installs anything. Returns whether a check was made. Never raises."""
+        try:
+            if not (self.config.get("update") or {}).get("check", True):
+                return False
+            now = self.clock()
+            if now - float(self.state.data.get("update_checked_at") or 0) < UPDATE_CHECK_EVERY:
+                return False
+            self.state.data["update_checked_at"] = now
+            lookup = self.latest_version
+            if lookup is None:
+                sys.path.insert(0, str(SCRIPTS))
+                import pircan_update
+                record = pircan_update.read_record()
+                source, base = record.get("source") or "github", record.get("base") or pircan_update.installed_base()
+                lookup = lambda: pircan_update.latest_version(source, base)    # noqa: E731
+            latest, current = lookup(), self.installed_version()
+            if latest and current and parse_version(latest) > parse_version(current):
+                self.state.data["update_available"] = latest
+                self.log(f"update available: PIRCAN {latest} (you have {current})")
+                if self.state.data.get("update_notified") != latest and (self.config.get("notify") or {}).get("desktop", True):
+                    self.state.data["update_notified"] = latest
+                    self.notify("PIRCAN: an update is available",
+                                f"Version {clean_label(latest, 20)} is available (you have {clean_label(current, 20)}). "
+                                "Update: /pircan:update in Claude Code, or run the installer again with --update.")
+            elif latest:
+                self.state.data.pop("update_available", None)
+            self.state.save()
+            return True
+        except Exception:  # noqa: BLE001 - an update check must never stop the runner
+            return False
+
     def once(self) -> None:
         self.catch_up()
         self.follow(wait_seconds=0)
@@ -633,6 +690,7 @@ class Runner:
                     self.catch_up()
                 self.follow()
                 self.maybe_policy_pass()
+                self.check_for_update()
                 backoff = 5
             except (SystemExit, Exception) as exc:  # noqa: BLE001 - the network may be away; keep trying
                 self.log(f"cannot reach the network ({type(exc).__name__}: {str(exc)[:200]}); retrying in {backoff}s")
@@ -705,12 +763,15 @@ def install_service() -> int:
         unit.write_text(systemd_unit(python, script, folder, path_env))
         subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
         result = subprocess.run(["systemctl", "--user", "enable", "--now", f"{name}.service"], capture_output=True, text=True)
+        if result.returncode == 0:                      # enable --now does not restart a running unit: it would keep old code
+            subprocess.run(["systemctl", "--user", "restart", f"{name}.service"], capture_output=True)
         where = str(unit)
     elif system == "Windows":
         command = windows_task_command(python, script, folder)
         result = subprocess.run(["schtasks", "/Create", "/TN", f"PIRCAN\\{name}", "/TR", command, "/SC", "ONLOGON",
                                  "/RL", "LIMITED", "/F"], capture_output=True, text=True)
         if result.returncode == 0:
+            subprocess.run(["schtasks", "/End", "/TN", f"PIRCAN\\{name}"], capture_output=True)   # a second copy must not start
             subprocess.run(["schtasks", "/Run", "/TN", f"PIRCAN\\{name}"], capture_output=True)
         where = f"Task Scheduler: PIRCAN\\{name}"
     else:
@@ -724,6 +785,42 @@ def install_service() -> int:
         print("To keep it running while you are logged out: loginctl enable-linger")
     print(f"Settings: {config_dir() / 'runner.json'}    Log: {state_dir() / 'runner.log'}")
     return 0
+
+
+def service_installed() -> bool:
+    name, system = service_name(), platform.system()
+    if system == "Darwin":
+        return (Path.home() / "Library" / "LaunchAgents" / f"com.creatimus.{name}.plist").exists()
+    if system == "Linux":
+        return (Path.home() / ".config" / "systemd" / "user" / f"{name}.service").exists()
+    if system == "Windows":
+        return subprocess.run(["schtasks", "/Query", "/TN", f"PIRCAN\\{name}"], capture_output=True).returncode == 0
+    return False
+
+
+def stop_service() -> int:
+    """Stop the background service if there is one. Returns 0 when it was stopped or none is installed."""
+    if not service_installed():
+        print("No background service installed for this agent.")
+        return 0
+    name, system = service_name(), platform.system()
+    if system == "Darwin":
+        plist = Path.home() / "Library" / "LaunchAgents" / f"com.creatimus.{name}.plist"
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(plist)], capture_output=True)
+    elif system == "Linux":
+        subprocess.run(["systemctl", "--user", "stop", f"{name}.service"], capture_output=True)
+    elif system == "Windows":
+        subprocess.run(["schtasks", "/End", "/TN", f"PIRCAN\\{name}"], capture_output=True)
+    print("Runner stopped.")
+    return 0
+
+
+def restart_service() -> int:
+    """Start the background service again with the current files. Returns 1 when none is installed."""
+    if not service_installed():
+        print("No background service installed for this agent.")
+        return 1
+    return install_service()
 
 
 def uninstall_service() -> int:
@@ -764,6 +861,10 @@ def status() -> int:
                            else "no recent connection" + (" (last " + time.ctime(seen) + ")" if seen else "")))
     counts = state.get("counts") or {}
     print("Tasks answered: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+    available = state.get("update_available")
+    if available:
+        print(f"Update available: PIRCAN {available} (you have {installed_plugin_version() or 'an older version'}). "
+              "Run pircan_update.py, or /pircan:update, or the installer with --update. Nothing is installed automatically.")
     return 0
 
 
@@ -778,7 +879,7 @@ def logs(lines: int = 40) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["run", "once", "init", "status", "install", "uninstall", "logs"])
+    parser.add_argument("command", choices=["run", "once", "init", "status", "install", "uninstall", "logs", "stop", "restart"])
     parser.add_argument("--config-dir")
     args = parser.parse_args(argv)
     if args.config_dir:
@@ -794,6 +895,10 @@ def main(argv=None) -> int:
         return install_service()
     if args.command == "uninstall":
         return uninstall_service()
+    if args.command == "stop":
+        return stop_service()
+    if args.command == "restart":
+        return restart_service()
     config = load_config()
     runner = Runner(network_client(), config, State(state_dir() / "state.json"),
                     Log(state_dir() / "runner.log", echo=args.command == "once" or sys.stdout.isatty()))

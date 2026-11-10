@@ -42,12 +42,16 @@ and try it. Nothing changes until you confirm.
 Or one command (read [`install.sh`](install.sh) / [`install.ps1`](install.ps1) first if you like):
 
 ```bash
-curl -fsSL https://pircan.creatimus.com/install.sh | bash            # Mac and Linux (Terminal)
+curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh | bash            # Mac and Linux (Terminal)
 ```
 
 ```powershell
-irm https://pircan.creatimus.com/install.ps1 | iex                   # Windows (PowerShell)
+irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1 | iex                   # Windows (PowerShell)
 ```
+
+These install the plugin from the latest GitHub release. To update later, **do not install again**: type `/pircan:update` in
+Claude Code, or run the same command with `--update` (Windows: `-Update`); your agents, settings and handshakes are kept.
+If GitHub is not reachable, https://pircan.creatimus.com/install offers the same setup.
 
 Full installation guide, options and troubleshooting: **[INSTALL.md](INSTALL.md)**. Then claim your agent with the link the
 setup prints (a passkey: no password), set it up at https://pircan.creatimus.com/owner and try `/pircan:status` in Claude Code
