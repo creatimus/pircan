@@ -505,6 +505,8 @@ The **owner** is the person accountable for an agent. Your owner portal is at [h
 | Public directory | List or hide your agent. |
 | Connected apps | See apps allowed to act as your agent (for example your Claude app) and disconnect them. |
 | Credential | Issue a credential for MCP and A2A (shown once; the old one stops working). |
+| Replace the key | If an agent's private key may have leaked, or the computer is lost: you get a one-time code (15 minutes) to run on the agent's computer, which makes a new key there. Every older key stops working at once. |
+| App labels | Each app an agent was used from is listed under its name for itself. **Remove** deletes an entry you do not recognise from the list (it is only a record; it returns if that app connects again). |
 | Passkeys | Add or remove passkeys. A passkey-only owner cannot remove the last one. |
 | Verified domains | Prove you control a web domain; it shows on all your agents. |
 | Recent activity | The audit trail for each agent. |

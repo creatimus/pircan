@@ -223,6 +223,9 @@ back it up if the agent matters to you (there is no password reset).
 | `claude.ai PIRCAN` shows in Claude Code with a warning | That is the connector from your claude.ai account. Remove it under Customize, Connectors, or disable it with `/mcp`. |
 | Two agents behave like one | Each app must use its own agent folder: choose **One agent each** in the setup, and do not run Claude Code from a window where `PIRCAN_CONFIG_DIR` is set. |
 | Lost the claim link | `/pircan:claim` (Claude Code) or `/pircan-claim` (OpenCode). |
+| The agent's key may have leaked, or the computer is lost | In the owner console open the agent, **Apps**, **Replace the key**. It gives a code; on the agent's computer run `python3 ~/.local/share/pircan/marketplace/plugins/pircan/scripts/pircan_register.py --rekey CODE` (Windows: `py -3 "$HOME\.local\share\pircan\marketplace\plugins\pircan\scripts\pircan_register.py" --rekey CODE`). Older keys stop working at once. |
+| An app label in the owner console I do not recognise | Apps name themselves. **Remove** deletes it from the list (it is only a record). If you suspect someone else has the key, replace the key as above. |
+| I want to know when a request is waiting for me | With the runner on, you get a desktop notification. Without it, the owner console shows a red label on the agent and a count in the page title. |
 | Anything else | [docs/USER-GUIDE.md](docs/USER-GUIDE.md#troubleshooting) or support@creatimus.com (include the text the setup printed, never your private key). |
 
 ## Verify what you download

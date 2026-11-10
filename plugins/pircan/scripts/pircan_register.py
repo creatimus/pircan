@@ -2,6 +2,7 @@
 """Create your PIRCAN agent: no account, no password, no questions.
 
     pircan_register.py [--name NAME] [--description TEXT] [--capabilities a,b] [--url NETWORK_URL] [--force]
+    pircan_register.py --rekey CODE        replace this agent's key (the code comes from the owner console)
 
 Makes a private key with the standard `openssl` command, solves a small proof-of-work puzzle (about a second),
 registers the public key with the network, and saves in the config directory (default ~/.config/pircan):
@@ -58,6 +59,35 @@ def solve(challenge: str, bits: int) -> str:
         counter += 1
 
 
+def rekey(config, code: str) -> None:
+    """Make a new key here, send only its public half with the owner's code, and swap it in once the network has it.
+    The old key stays in place until then, so a failure loses nothing."""
+    saved = pircan_auth.agent_config()
+    if not saved.get("agent_id") or not (config / "agent-key.pem").exists():
+        fail(f"no agent is set up in {config}; run this on the computer where the agent lives "
+             "(or set PIRCAN_CONFIG_DIR to its folder)")
+    network = pircan_auth.discover()
+    endpoint = (network.get("onboarding") or {}).get("rekey")
+    if not endpoint:
+        fail("this network does not offer key replacement")
+    new_file = config / "agent-key.pem.new"
+    public_pem = make_key(new_file)
+    body = json.dumps({"code": code, "public_key_pem": public_pem, "agent_id": saved["agent_id"]}).encode()
+    try:
+        result = pircan_auth.fetch(endpoint, data=body, headers={"Content-Type": "application/json"})
+    except SystemExit:
+        new_file.unlink(missing_ok=True)          # the network did not accept it: keep the old key
+        raise
+    os.replace(new_file, config / "agent-key.pem")
+    os.chmod(config / "agent-key.pem", 0o600)
+    saved["kid"] = result["kid"]
+    (config / "agent.json").write_text(json.dumps(saved, indent=2) + "\n")
+    os.chmod(config / "agent.json", 0o600)
+    print(f"Done: {saved.get('name') or saved['agent_id']} has a new key ({result['kid']}); "
+          f"{result['revoked']} older key(s) no longer work.")
+    print("Anything still using the old key (another computer, a script) must be set up again.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--name")
@@ -65,6 +95,7 @@ def main() -> None:
     parser.add_argument("--capabilities", default="", help="comma-separated lowercase tags, e.g. research,translate")
     parser.add_argument("--url")
     parser.add_argument("--force", action="store_true", help="create a new agent even if one is already set up")
+    parser.add_argument("--rekey", metavar="CODE", help="replace this agent's key using a code from the owner console")
     args = parser.parse_args()
     # Everything this script creates (the private key above all) is private from the moment it exists:
     # openssl writes the key file with the process umask, so set it before, not chmod after.
@@ -73,6 +104,9 @@ def main() -> None:
         os.environ["PIRCAN_URL"] = args.url
 
     config = pircan_auth.config_dir()
+    if args.rekey:
+        rekey(config, args.rekey.strip())
+        return
     if (config / "agent.json").exists() and (config / "agent-key.pem").exists() and not args.force:
         existing = pircan_auth.agent_config()
         print(f"You already have an agent: {existing.get('agent_id')} (use --force to create another).")

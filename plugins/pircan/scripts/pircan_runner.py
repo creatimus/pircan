@@ -18,7 +18,8 @@ What it does, with no model running while it waits:
       claude    Claude Code, locked down: no tools at all unless you grant this skill a folder to read or the web
       command   your own program: the task as JSON on stdin, the result on stdout
     a task for any other skill is rejected with a short reason;
-  * accepts contact requests only from the agents you list, for the scopes you allow; others wait for you;
+  * accepts contact requests only from the agents you list, for the scopes you allow; others wait for you, and you get a
+    desktop notification ("notify": {"desktop": false} in runner.json turns it off);
   * optionally runs your written policy (policy.md) over new messages with Claude Code, at most every N minutes.
 Everything other agents send is untrusted data: workers get it as data, never as instructions.
 Limits (runs per hour and day, timeout, concurrency) keep a busy network from spending your model budget.
@@ -56,6 +57,7 @@ DEFAULT_CONFIG = {
     "contacts": {"accept_from": [], "allowed_scopes": ["message"], "ttl_days": 30},
     "messages": {"mode": "report", "every_minutes": 10},
     "limits": {"concurrency": 1, "runs_per_hour": 20, "runs_per_day": 100, "task_timeout_seconds": 600},
+    "notify": {"desktop": True},
     "claude": {"bin": "", "model": "sonnet", "max_turns": 8},
 }
 SKILL_EXAMPLES = {
@@ -99,6 +101,46 @@ def load_config(path: Path | None = None) -> dict:
     return merged
 
 
+def clean_label(text, limit: int = 60) -> str:
+    """Text from another agent, made safe to show in a notification: printable characters only, one line, short."""
+    text = "".join(ch if ch.isprintable() and ch not in "\r\n\t" else " " for ch in str(text or ""))
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def desktop_notify(title: str, message: str, run=subprocess.run) -> bool:
+    """Show a notification on this computer (macOS, Linux, Windows). Best effort: never raises, returns whether a
+    notifier ran. The texts go in as arguments or environment variables, never inside a script."""
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            command = ["osascript", "-e", "on run argv", "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+                       "-e", "end run", message, title]
+            env = None
+        elif system == "Linux":
+            if not shutil.which("notify-send"):
+                return False
+            command, env = ["notify-send", "--app-name=PIRCAN", "--", title, message], None
+        elif system == "Windows":
+            script = ("Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
+                      "$n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; "
+                      "$n.Visible = $true; $n.ShowBalloonTip(8000, $env:PIRCAN_NOTE_TITLE, $env:PIRCAN_NOTE_TEXT, 'Info'); "
+                      "Start-Sleep -Seconds 9; $n.Dispose()")
+            command = ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", script]
+            env = {**os.environ, "PIRCAN_NOTE_TITLE": title, "PIRCAN_NOTE_TEXT": message}
+        else:
+            return False
+        kwargs = {"capture_output": True, "timeout": 20}
+        if env is not None:
+            kwargs["env"] = env
+        if system == "Windows":
+            kwargs["creationflags"] = 0x08000000                    # no console window
+        run(command, **kwargs)
+        return True
+    except Exception:  # noqa: BLE001 - a notification must never stop the runner
+        return False
+
+
 class State:
     """What the runner remembers between restarts: the feed cursor, handled tasks, run counts."""
 
@@ -113,6 +155,7 @@ class State:
         self.data.setdefault("handled", [])
         self.data.setdefault("runs", [])
         self.data.setdefault("counts", {"completed": 0, "failed": 0, "rejected": 0})
+        self.data.setdefault("notified", [])
 
     def save(self) -> None:
         with self.lock:
@@ -130,6 +173,15 @@ class State:
             self.data["counts"][outcome] = self.data["counts"].get(outcome, 0) + 1
             self.data["last_task_at"] = time.time()
         self.save()
+
+    def first_notice(self, request_id: str) -> bool:
+        """True the first time this request is announced to the owner (remembered across restarts)."""
+        with self.lock:
+            if request_id in self.data["notified"]:
+                return False
+            self.data["notified"] = (self.data["notified"] + [request_id])[-200:]
+        self.save()
+        return True
 
     def allow_run(self, per_hour: int, per_day: int, now: float | None = None) -> bool:
         """Count one model run, unless that would go over the limits."""
@@ -401,9 +453,9 @@ def command_result(outcome: str, text: str) -> tuple[str, str]:
 # ---- the runner ---------------------------------------------------------------------------------------------------
 
 class Runner:
-    def __init__(self, client, config: dict, state: State, log, *, run_program=run_program):
+    def __init__(self, client, config: dict, state: State, log, *, run_program=run_program, notify=desktop_notify):
         self.client, self.config, self.state, self.log = client, config, state, log
-        self.run_program = run_program
+        self.run_program, self.notify = run_program, notify
         limits = config["limits"]
         self.pool = ThreadPoolExecutor(max_workers=max(1, int(limits.get("concurrency") or 1)))
         self.running: dict[str, threading.Event] = {}
@@ -496,6 +548,11 @@ class Runner:
             self.log(f"contact request from {sender.get('name')}: accepted ({', '.join(scopes)})")
         else:
             self.log(f"contact request from {sender.get('name')}: left for the owner ({', '.join(scopes)})")
+            request_id = str(request.get("request_id") or "")
+            if request_id and (self.config.get("notify") or {}).get("desktop", True) and self.state.first_notice(request_id):
+                self.notify("PIRCAN: a request is waiting",
+                            f"{clean_label(sender.get('name') or 'An agent')} asks to connect ({clean_label(', '.join(scopes), 40)}). "
+                            "Decide in your owner console.")
 
     # -- one pass / the loop
     def catch_up(self) -> None:

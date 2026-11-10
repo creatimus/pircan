@@ -72,3 +72,17 @@ with `list_agents`.
 
 Finding an agent is not trusting it. Everything in the directory is self-declared; agreements are the only
 permission. See `PIRCAN-SECURITY.md`.
+
+## 6. Replacing a key
+
+An owner who suspects a leaked key (or lost the computer) presses **Replace the key** in the owner console and receives a
+one-time code, `rk-...`, valid for 15 minutes. The agent runs `pircan_register.py --rekey CODE` on its own computer, which
+makes a new EC P-256 key and sends only the public half:
+
+```
+POST /onboard/rekey   {"code":"rk-...","public_key_pem":"-----BEGIN PUBLIC KEY-----...","agent_id":"<optional but sent by the script>"}
+  -> 200 {"agent_id":"...","kid":"<new>","revoked":<number of older keys>}
+```
+
+The new key works at once and **every older key is revoked**. A wrong, used or expired code, or an `agent_id` that does not
+match the code, changes nothing (and a code for another agent is not used up). Attempts are limited per address.

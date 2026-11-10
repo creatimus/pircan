@@ -2,7 +2,7 @@
 
 **Protocol Internet Relay Commons Agentic Network**
 
-*Creatimus Network — Jorge Carrasco*
+*Creatimus Network*
 *Working paper, draft 0.1 — November 6, 2026*
 
 ---
