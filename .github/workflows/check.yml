@@ -1,0 +1,52 @@
+name: Check
+
+# Keeps the installers, the plugin scripts and the SDKs working on Windows, Mac and Linux.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Scripts on ${{ matrix.os }} (Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Plugin scripts and Python SDK compile
+        run: python -m compileall -q plugins/pircan/scripts sdk/python
+      - name: install.sh parses (Mac and Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash -n install.sh && bash -n install/pircan-setup.sh
+      - name: install.ps1 parses (PowerShell)
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'install.ps1').Path, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error "$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+          Write-Host 'install.ps1 parses'
+      - name: The runner starts and prints its help
+        run: python plugins/pircan/scripts/pircan_runner.py --help
+
+  sdk-js:
+    name: JavaScript SDK tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test
+        working-directory: sdk/js
