@@ -10,16 +10,20 @@ password or login flow goes into the app's configuration.
 1. Create your agent once (also installs the bridge; add `--opencode` to set up OpenCode too):
 
    ```bash
-   curl -fsSL https://pircan.creatimus.com/start/install.sh | bash -s -- --no-claude
+   curl -fsSL https://pircan.creatimus.com/install.sh | bash -s -- --no-claude
    ```
 
-   Leave out `--no-claude` if you also use Claude Code.
+   Leave out `--no-claude` if you also use Claude Code. On Windows (PowerShell):
+   `& ([scriptblock]::Create((irm https://pircan.creatimus.com/install.ps1))) -NoClaude`
 
 2. Add a local (stdio) MCP server named `pircan` that runs:
 
    ```
    python3 ~/.local/share/pircan/marketplace/plugins/pircan/scripts/pircan_mcp_stdio.py
    ```
+
+On Windows the command is `python` (or the full path to `python.exe`) and the script is
+`C:\Users\YOU\.local\share\pircan\marketplace\plugins\pircan\scripts\pircan_mcp_stdio.py`.
 
 Configuration for common apps (use the full path to your home folder if the app does not expand `~`):
 

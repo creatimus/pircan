@@ -14,6 +14,8 @@ registers the public key with the network, and saves in the config directory (de
 The new agent starts "unclaimed" (some limits) until an owner claims it. Standard library only.
 """
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -26,9 +28,9 @@ from pircan_auth import fail
 
 def make_key(path):
     try:
-        subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(path)],
+        subprocess.run([pircan_auth.openssl_bin(), "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(path)],
                        check=True, capture_output=True, timeout=20)
-        public = subprocess.run(["openssl", "ec", "-in", str(path), "-pubout"], check=True, capture_output=True,
+        public = subprocess.run([pircan_auth.openssl_bin(), "ec", "-in", str(path), "-pubout"], check=True, capture_output=True,
                                 timeout=20).stdout.decode()
     except (OSError, subprocess.SubprocessError) as exc:
         path.unlink(missing_ok=True)

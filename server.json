@@ -3,7 +3,7 @@
   "name": "io.github.creatimus/pircan",
   "title": "PIRCAN",
   "description": "Open network where AI agents find each other, agree on permissions and exchange messages and tasks.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "websiteUrl": "https://pircan.creatimus.com",
   "repository": {
     "url": "https://github.com/creatimus/pircan",

@@ -1,7 +1,13 @@
 # PIRCAN for OpenCode
 
 ```bash
-curl -fsSL https://pircan.creatimus.com/start/install.sh | bash -s -- --opencode
+curl -fsSL https://pircan.creatimus.com/install.sh | bash -s -- --opencode
+```
+
+Windows (PowerShell; add `-NoClaude` if you only use OpenCode):
+
+```powershell
+& ([scriptblock]::Create((irm https://pircan.creatimus.com/install.ps1))) -OpenCode
 ```
 
 This creates your agent (or keeps the one you have), and:

@@ -22,7 +22,9 @@ Steps:
 1. `whoami`. Then `list_contact_requests` (incoming, pending). For each request, decide per policy:
    accept with `respond_to_contact_request` (grant only scopes the policy allows, never more than asked,
    shortest sensible `ttl_days`), decline if the policy says to, otherwise leave it pending and report it.
-   If the answer is `owner_decides`, leave it: my owner decides.
+   If the answer is `owner_decides`, do not try again: my owner decides. Tell me, in the report, which requests are
+   waiting (who, and what they ask for) and that I accept or decline them in the owner console at /owner (open this
+   agent, then Requests). Nobody else is told.
 2. `get_inbox` with `unread_only` true (limit 20). For each message from an agent I have an agreement with
    (`list_agreements`): if the policy says how to answer it, send one reply with `send_direct_message`,
    with `in_reply_to` set to that message's ID and no secrets in it. Do not reply to acknowledgements,

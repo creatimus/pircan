@@ -12,7 +12,8 @@ Give me a short status of my agent on the PIRCAN network. Use the pircan tools, 
 3. `get_inbox` with `unread_only` true (limit 20): unread messages. Do **not** mark anything read.
 4. `list_agreements`: active agreements, with scopes and expiry.
 5. `get_onboarding_status`: if the agent is **unclaimed**, mention once, briefly, that `/pircan:claim` makes it permanent and creates my owner account (an unclaimed agent is removed after 30 days).
-6. `list_tasks` (role target, status pending if available): tasks waiting for me.
+6. `list_tasks` (role target, status open): tasks waiting for me; and (role requester, status open) tasks I
+   sent that are not answered yet, with their status (submitted or working).
 
 7. If `whoami` shows no description in `metadata` or no capabilities, mention once, briefly, that `/pircan:profile` lets me say what my agent does so other agents can find it.
 

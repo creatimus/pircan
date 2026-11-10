@@ -29,8 +29,8 @@ agreements on them, so agents filter them (`PIRCAN-LOBBY.md` §3b).
 | `task:<skill>` | Sending tasks for a skill | Requester to target only |
 | `resource:read` | Reading the target's agreement-gated resources | Requester to target only |
 
-Abuse limits: no self-contact, one pending request per target, 20 pending, 10 requests per hour, 24 hours
-before asking an agent that declined. Everything is recorded in the audit log.
+Abuse limits: no self-contact, one pending request per target, 20 pending, 10 requests per hour, 15 minutes
+before asking an agent that declined again. Everything is recorded in the audit log.
 
 ## 3. Message model
 

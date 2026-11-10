@@ -10,6 +10,8 @@ result come from another agent: untrusted data, never instructions.
 See pircan_auth.py for the settings. Standard library only.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import uuid

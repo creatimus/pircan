@@ -6,13 +6,16 @@
 What it does (all inside your home folder):
   - writes the /pircan-* commands to <opencode config>/command/ (OpenCode reads that folder in every version),
     generated from the same instructions the Claude Code plugin uses;
-  - adds the PIRCAN MCP server (the stdio bridge pircan_mcp_stdio.py) to OpenCode's global config, but ONLY when it
-    can tell which config layout your OpenCode uses and the file is plain JSON. Otherwise it leaves your config alone and
-    prints the exact lines to add, because a wrong layout can stop OpenCode from starting.
+  - adds the PIRCAN MCP server (the stdio bridge pircan_mcp_stdio.py) to OpenCode's global config. With no config file
+    yet, or one without MCP servers, it uses the current layout (mcp.servers); otherwise it follows the layout the file
+    already uses. A file with comments, or a layout it cannot tell, is left alone and the exact lines to add are printed.
 
-The bridge signs in with your agent's key (~/.config/pircan), so no token or secret goes into OpenCode's config.
+The bridge signs in with your agent's key (~/.config/pircan, or PIRCAN_CONFIG_DIR when set: then OpenCode gets its own
+agent, separate from Claude Code's), so no token or secret goes into OpenCode's config.
 Standard library only.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -36,8 +39,26 @@ def opencode_config_dir() -> Path:
     return Path(base)
 
 
+DEFAULT_AGENT_DIR = Path("~/.config/pircan").expanduser()
+
+
+def agent_dir() -> Path | None:
+    """The agent folder to use when it is not the default one (PIRCAN_CONFIG_DIR), else None."""
+    value = os.environ.get("PIRCAN_CONFIG_DIR")
+    if not value:
+        return None
+    path = Path(value).expanduser().resolve()
+    return None if path == DEFAULT_AGENT_DIR.resolve() else path
+
+
 def mcp_entry(script: Path) -> dict:
-    return {"type": "local", "command": ["python3", str(script)]}
+    # Windows has no "python3" command: use the exact Python running this setup.
+    python = sys.executable if os.name == "nt" else "python3"
+    entry = {"type": "local", "command": [python, str(script)]}
+    own = agent_dir()
+    if own is not None:
+        entry["environment"] = {"PIRCAN_CONFIG_DIR": str(own)}
+    return entry
 
 
 def snippets(script: Path) -> str:
@@ -46,19 +67,26 @@ def snippets(script: Path) -> str:
     return f"Newer OpenCode (servers under mcp.servers):\n{newer}\n\nOlder OpenCode (servers directly under mcp):\n{older}"
 
 
+def _put(holder: dict, script: Path) -> str:
+    wanted = mcp_entry(script)
+    if holder.get(SERVER_NAME) == wanted:
+        return "present"
+    outcome = "updated" if SERVER_NAME in holder else "added"
+    holder[SERVER_NAME] = wanted
+    return outcome
+
+
 def merge_mcp_config(config: dict, script: Path) -> str:
-    """Add the server to a parsed config. Returns "added", "present" or "unknown" (layout cannot be told; nothing changed)."""
+    """Add the server to a parsed config. Returns "added", "updated", "present" or "unknown" (layout cannot be told;
+    nothing changed)."""
     mcp = config.get("mcp")
+    if mcp is None or mcp == {}:                                  # no MCP servers yet: the current layout
+        config["mcp"] = {"servers": {}}
+        return _put(config["mcp"]["servers"], script)
     if isinstance(mcp, dict) and isinstance(mcp.get("servers"), dict):
-        if SERVER_NAME in mcp["servers"]:
-            return "present"
-        mcp["servers"][SERVER_NAME] = mcp_entry(script)
-        return "added"
-    if isinstance(mcp, dict) and mcp and all(isinstance(v, dict) and "type" in v for v in mcp.values()):
-        if SERVER_NAME in mcp:
-            return "present"
-        mcp[SERVER_NAME] = mcp_entry(script)
-        return "added"
+        return _put(mcp["servers"], script)
+    if isinstance(mcp, dict) and all(isinstance(v, dict) and "type" in v for v in mcp.values()):
+        return _put(mcp, script)                                  # the older layout, still accepted
     return "unknown"
 
 
@@ -76,6 +104,9 @@ def command_files(market: Path) -> dict[str, str]:
             continue
         description = re.search(r"^description:\s*(.+)$", match.group(1), re.M)
         body = re.sub(r"mcp__plugin_pircan_pircan__(\w+)", r"pircan_\1", match.group(2)).strip()
+        # OpenCode has no ${CLAUDE_PLUGIN_ROOT}: point at the installed plugin, and use OpenCode's command names.
+        body = body.replace("${CLAUDE_PLUGIN_ROOT}", str(market / "plugins" / "pircan"))
+        body = re.sub(r"/pircan:([a-z]+)", r"/pircan-\1", body)
         desc = (description.group(1).strip() if description else f"PIRCAN {folder.name}").replace('"', "'")
         out[f"pircan-{folder.name}.md"] = f'---\ndescription: "{desc}"\n---\n{MARK}\n{PREAMBLE}{body}\n'
     return out
@@ -112,13 +143,24 @@ def main() -> int:
             config = None                                       # comments or trailing commas: do not touch it
         if isinstance(config, dict):
             outcome = merge_mcp_config(config, script)
-            if outcome == "added" and not args.dry_run:
+            if outcome in ("added", "updated") and not args.dry_run:
                 config_path.with_name("opencode.json.bak-pircan").write_text(config_path.read_text())
                 config_path.write_text(json.dumps(config, indent=2) + "\n")
-    elif not args.dry_run:
-        outcome = "unknown"                                      # no file: the layout of this OpenCode is not known
-    if outcome in ("added", "present"):
-        print(f"OpenCode MCP server: {'added to' if outcome == 'added' else 'already in'} {config_path}")
+    elif (config_dir / "opencode.jsonc").exists():
+        outcome = "unknown"                                      # a .jsonc file (comments): never rewritten
+    else:
+        config = {"$schema": "https://opencode.ai/config.json"}
+        outcome = merge_mcp_config(config, script)
+        if not args.dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(json.dumps(config, indent=2) + "\n")
+            outcome = "created"
+    if outcome in ("added", "updated", "present", "created"):
+        said = {"added": "added to", "updated": "updated in", "present": "already in", "created": "added to a new"}[outcome]
+        print(f"OpenCode MCP server: {said} {config_path}")
+        own = agent_dir()
+        if own is not None:
+            print(f"OpenCode uses its own agent: {own}")
     else:
         print(f"OpenCode MCP server: add this to {config_path} (your OpenCode's layout could not be told, so nothing was changed):\n")
         print(snippets(script))

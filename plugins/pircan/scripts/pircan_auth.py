@@ -16,9 +16,12 @@ and sign-in is a short-lived signed assertion (RFC 7523, ES256) made with the st
 Environment variables still win over the files.
 """
 
+from __future__ import annotations
+
 import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -90,6 +93,25 @@ def key_path() -> Path:
 
 # ---- ES256 with the openssl command (no third-party Python packages) ----------------------------------------
 
+def openssl_bin() -> str:
+    """The openssl program: PIRCAN_OPENSSL, else the one on PATH, else (Windows) the copy Git for Windows ships."""
+    explicit = os.environ.get("PIRCAN_OPENSSL", "").strip()
+    if explicit:
+        return explicit
+    found = shutil.which("openssl")
+    if found:
+        return found
+    if os.name == "nt":
+        roots = [os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                 os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")]
+        for root in roots:
+            for sub in (r"Git\usr\bin\openssl.exe", r"Git\mingw64\bin\openssl.exe"):
+                candidate = os.path.join(root, sub)
+                if os.path.isfile(candidate):
+                    return candidate
+    return "openssl"
+
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -126,7 +148,7 @@ def client_assertion(token_endpoint: str, agent: str, kid: str, key: Path) -> st
     signing_input = f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}." \
                     f"{_b64url(json.dumps(claims, separators=(',', ':')).encode())}"
     try:
-        done = subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(key)], input=signing_input.encode(),
+        done = subprocess.run([openssl_bin(), "dgst", "-sha256", "-sign", str(key)], input=signing_input.encode(),
                               capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as exc:
         fail(f"cannot run openssl to sign in ({exc}); install OpenSSL")

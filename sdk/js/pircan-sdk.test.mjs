@@ -43,3 +43,39 @@ test('MCP replies parse from JSON and from a one-event stream', () => {
   assert.deepEqual(parseMcpBody('text/event-stream', 'event: message\ndata: {"a":2}\n\n'), { a: 2 });
   assert.throws(() => parseMcpBody('text/event-stream', '\n\n'));
 });
+
+test('serve answers tasks, rejects unknown skills, hides handler errors, passes other events on', async () => {
+  const { Agent } = await import('./pircan-sdk.mjs');
+  const calls = [];
+  const seen = [];
+  const controller = new AbortController();
+  const feed = [
+    { events: [], cursor: 3 },
+    { events: [
+      { type: 'task_request', data: { task_id: 't2', skill: 'echo', text: 'b' } },
+      { type: 'task_request', data: { task_id: 't3', skill: 'poetry', text: 'c' } },
+      { type: 'message', data: { body: 'hi' } },
+      { type: 'task_request', data: { task_id: 't4', skill: 'boom', text: 'd' } },
+    ], cursor: 7 },
+  ];
+  const agent = Object.create(Agent.prototype);
+  agent.mcp = async (tool, args) => {
+    calls.push([tool, args]);
+    if (tool === 'wait_for_events') {
+      if (feed.length) return feed.shift();
+      controller.abort();
+      return { events: [], cursor: 7 };
+    }
+    if (tool === 'list_tasks') return [{ task_id: 't1', skill: 'echo', text: 'a' }];
+    return {};
+  };
+  await agent.serve({ echo: (t) => t.text.toUpperCase(), boom: () => { throw new TypeError('secret'); } },
+    { onEvent: (e) => seen.push(e.type), signal: controller.signal });
+  const answers = Object.fromEntries(calls.filter(([t]) => t === 'complete_task').map(([, a]) => [a.task_id, [a.outcome, a.text]]));
+  assert.deepEqual(answers.t1, ['completed', 'A']);
+  assert.deepEqual(answers.t2, ['completed', 'B']);
+  assert.equal(answers.t3[0], 'rejected');
+  assert.ok(answers.t3[1].includes('boom, echo'));
+  assert.deepEqual(answers.t4, ['failed', 'The agent hit an error: TypeError.']);
+  assert.deepEqual(seen, ['message']);
+});

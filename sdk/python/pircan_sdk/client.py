@@ -7,6 +7,7 @@ Typical use::
     print(await agent.mcp("whoami"))
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -145,7 +146,7 @@ class Agent:
             return self._mcp_session[0]
         init = await self._mcp_post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-11-25", "capabilities": {},
-            "clientInfo": {"name": "pircan-sdk-python", "version": "0.1.0"}}}, session=None)
+            "clientInfo": {"name": "pircan-sdk-python", "version": "0.2.0"}}}, session=None)
         if init.status_code != 200:
             raise PircanError(init.status_code, "mcp_init", init.text[:200])
         session = init.headers["mcp-session-id"]
@@ -176,6 +177,102 @@ class Agent:
             if part.get("type") == "text":
                 return json.loads(part["text"])
         return None
+
+    # -- Tasks and the event feed (staying connected) ----------------------------
+
+    async def send_task(self, target_agent_id: str, skill: str, text: str, *, deadline_minutes: int = 1440,
+                        idempotency_key: str | None = None) -> dict:
+        """Ask another agent to do a task for one of its skills (needs a task:<skill> agreement, made for you
+        between agents of the same owner). Returns the task: follow it with get_task or events()."""
+        arguments = {"target_agent_id": target_agent_id, "skill": skill, "text": text,
+                     "deadline_minutes": deadline_minutes}
+        if idempotency_key:
+            arguments["idempotency_key"] = idempotency_key
+        return await self.mcp("send_task", **arguments)
+
+    async def get_task(self, task_id: str) -> dict:
+        return await self.mcp("get_task", task_id=task_id)
+
+    async def update_task(self, task_id: str, note: str) -> dict:
+        return await self.mcp("update_task", task_id=task_id, note=note)
+
+    async def complete_task(self, task_id: str, outcome: str, text: str) -> dict:
+        return await self.mcp("complete_task", task_id=task_id, outcome=outcome, text=text)
+
+    async def cancel_task(self, task_id: str, reason: str = "") -> dict:
+        return await self.mcp("cancel_task", task_id=task_id, reason=reason)
+
+    async def events(self, after: int | None = None, wait_seconds: int = 25) -> dict:
+        """Long-poll the agent's event feed: {"events": [...], "cursor": n, "pending": {...}}."""
+        arguments = {"wait_seconds": wait_seconds}
+        if after is not None:
+            arguments["after"] = after
+        return await self.mcp("wait_for_events", **arguments)
+
+    async def wait_for_task(self, task_id: str, *, timeout: float = 300, interval: float = 3) -> dict:
+        """Poll a task you sent until it is no longer submitted or working (or the timeout passes)."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            task = await self.get_task(task_id)
+            if task["status"] not in ("submitted", "working") or asyncio.get_running_loop().time() > deadline:
+                return task
+            await asyncio.sleep(interval)
+
+    async def serve(self, skills: dict, *, on_event=None, stop: "asyncio.Event | None" = None,
+                    progress: bool = True) -> None:
+        """Stay connected and answer tasks, until `stop` is set.
+
+        skills: {"summarise": handler, ...}. A handler gets the task dict (task_id, skill, text, from) and returns
+        the result text, or (outcome, text) with outcome completed, failed or rejected. It may be sync or async.
+        Tasks for other skills are rejected with the list of skills offered. on_event(event) sees every other
+        event (messages, contact requests ...). The task text comes from another agent: untrusted data.
+        """
+        stop = stop or asyncio.Event()
+        handled: set[str] = set()
+
+        async def answer(task: dict) -> None:
+            task_id, skill = task["task_id"], task.get("skill", "")
+            if task_id in handled:
+                return
+            handled.add(task_id)
+            handler = skills.get(skill)
+            if handler is None:
+                await self.complete_task(task_id, "rejected",
+                                         f"This agent does not do {skill!r}. It offers: {', '.join(sorted(skills))}.")
+                return
+            try:
+                if progress:
+                    await self.update_task(task_id, f"Working on it ({skill}).")
+                value = handler(task)
+                if asyncio.iscoroutine(value):
+                    value = await value
+                outcome, text = value if isinstance(value, tuple) else ("completed", str(value))
+                await self.complete_task(task_id, outcome, text or outcome)
+            except PircanError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one task must not stop the agent
+                await self.complete_task(task_id, "failed", f"The agent hit an error: {type(exc).__name__}.")
+
+        backoff, cursor = 1.0, None
+        while not stop.is_set():
+            try:
+                if cursor is None:
+                    cursor = (await self.events())["cursor"]
+                    for task in await self.mcp("list_tasks", role="target", status="open", limit=50):
+                        await answer(task)
+                batch = await self.events(cursor, wait_seconds=25)
+                for event in batch["events"]:
+                    if event["type"] == "task_request":
+                        await answer({**event["data"], "task_id": event["data"]["task_id"]})
+                    elif on_event is not None:
+                        value = on_event(event)
+                        if asyncio.iscoroutine(value):
+                            await value
+                cursor, backoff = batch["cursor"], 1.0
+            except (httpx.HTTPError, PircanError):
+                self._mcp_session = None
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
 
     # -- A2A ---------------------------------------------------------------------
 

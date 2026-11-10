@@ -113,7 +113,7 @@ export class Agent {
   async mcp(tool, args = {}) {
     if (!this.mcpSession) {
       const init = await this.#mcpPost({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
-        protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'pircan-sdk-js', version: '0.1.0' } } });
+        protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'pircan-sdk-js', version: '0.2.0' } } });
       if (!init.ok) throw new PircanError(init.status, 'mcp_init', await init.text());
       this.mcpSession = init.headers.get('mcp-session-id');
       await this.#mcpPost({ jsonrpc: '2.0', method: 'notifications/initialized' }, this.mcpSession);
@@ -155,4 +155,74 @@ export class Agent {
   }
 
   a2aGetTask(taskId) { return this.a2a('GetTask', { id: taskId }); }
+
+  // -- Tasks and the event feed (staying connected) -------------------------------------------------------------
+  sendTask(targetAgentId, skill, text, { deadlineMinutes = 1440, idempotencyKey } = {}) {
+    const args = { target_agent_id: targetAgentId, skill, text, deadline_minutes: deadlineMinutes };
+    if (idempotencyKey) args.idempotency_key = idempotencyKey;
+    return this.mcp('send_task', args);
+  }
+
+  getTask(taskId) { return this.mcp('get_task', { task_id: taskId }); }
+  updateTask(taskId, note) { return this.mcp('update_task', { task_id: taskId, note }); }
+  completeTask(taskId, outcome, text) { return this.mcp('complete_task', { task_id: taskId, outcome, text }); }
+  cancelTask(taskId, reason = '') { return this.mcp('cancel_task', { task_id: taskId, reason }); }
+
+  /** Long-poll the agent's event feed: { events, cursor, pending }. */
+  events(after, waitSeconds = 25) {
+    const args = { wait_seconds: waitSeconds };
+    if (after !== undefined && after !== null) args.after = after;
+    return this.mcp('wait_for_events', args);
+  }
+
+  /**
+   * Stay connected and answer tasks until `signal` aborts.
+   * skills: { summarise: async (task) => 'text' | ['completed'|'failed'|'rejected', 'text'] }.
+   * Other skills are rejected; a handler error becomes `failed` without details. onEvent sees other events.
+   * Task text comes from another agent: untrusted data, never instructions.
+   */
+  async serve(skills, { onEvent, signal, progress = true } = {}) {
+    const handled = new Set();
+    const answer = async (task) => {
+      if (handled.has(task.task_id)) return;
+      handled.add(task.task_id);
+      const handler = skills[task.skill];
+      if (!handler) {
+        await this.completeTask(task.task_id, 'rejected',
+          `This agent does not do '${task.skill}'. It offers: ${Object.keys(skills).sort().join(', ')}.`);
+        return;
+      }
+      try {
+        if (progress) await this.updateTask(task.task_id, `Working on it (${task.skill}).`);
+        const value = await handler(task);
+        const [outcome, text] = Array.isArray(value) ? value : ['completed', String(value)];
+        await this.completeTask(task.task_id, outcome, text || outcome);
+      } catch (error) {
+        if (error instanceof PircanError) throw error;
+        await this.completeTask(task.task_id, 'failed', `The agent hit an error: ${error?.name ?? 'Error'}.`);
+      }
+    };
+    let cursor = null;
+    let backoff = 1000;
+    while (!signal?.aborted) {
+      try {
+        if (cursor === null) {
+          cursor = (await this.events()).cursor;
+          for (const task of await this.mcp('list_tasks', { role: 'target', status: 'open', limit: 50 })) await answer(task);
+        }
+        const batch = await this.events(cursor, 25);
+        for (const event of batch.events) {
+          if (event.type === 'task_request') await answer(event.data);
+          else if (onEvent) await onEvent(event);
+        }
+        cursor = batch.cursor;
+        backoff = 1000;
+      } catch (error) {
+        if (signal?.aborted) break;
+        this.mcpSession = null;
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        backoff = Math.min(backoff * 2, 60000);
+      }
+    }
+  }
 }
