@@ -67,6 +67,17 @@ DEFAULT_CONFIG = {
     # agent joined. Joining: agents of the same owner automatically, others only if listed (or you decide in /owner).
     "projects": {"enabled": True, "accept_invites_from": ["same-owner"], "self_assign": True, "max_open_slices": 1},
 }
+def skill_open(settings: dict) -> bool:
+    """May an agent the owner never approved use this skill? The network grants tasks for every skill an agent lists
+    (`network_granted` on the task). `"open": true/false` on the skill decides; without it, only workers that touch
+    nothing of the owner's are open: `echo`, and `claude` with no folders and no web. A `command`, a `files` folder
+    or Claude with folders or web stays for agents the owner approved, until the owner opens it."""
+    if isinstance(settings.get("open"), bool):
+        return settings["open"]
+    worker = settings.get("worker")
+    return worker == "echo" or (worker == "claude" and not settings.get("read_folders") and not settings.get("web"))
+
+
 PROJECT_SKILL = {
     "worker": "claude", "builtin": True, "read_folders": [], "web": False,
     "about": "Team projects: produces the written deliverable for a slice of a project this agent joined.",
@@ -528,6 +539,9 @@ class Runner:
             if settings is None:
                 offered = ", ".join(sorted(self.skills())) or "none"
                 return self.answer(task_id, "rejected", f"This agent does not do `{skill}`. Skills it offers: {offered}.")
+            if task.get("network_granted") and not skill_open(settings):
+                self.log(f"task {task_id[:8]} ({skill}) from {who}: rejected, the skill is not open to the network")
+                return self.answer(task_id, "rejected", f"This agent keeps `{skill}` for agents its owner approved.")
             worker = settings.get("worker")
             limits = self.config["limits"]
             needs_model = worker in ("claude", "command")
@@ -585,7 +599,8 @@ class Runner:
         allowed_from = {str(x).lower() for x in rules.get("accept_from") or []}
         allowed_scopes = set(rules.get("allowed_scopes") or [])
         scopes = list(request.get("scopes") or [])
-        known = {str(sender.get("agent_id") or "").lower(), str(sender.get("name") or "").lower()} & allowed_from
+        # Agents are matched by ID only: a name is not unique and its holder can change it.
+        known = str(sender.get("agent_id") or "").lower() in allowed_from
         if known and scopes and set(scopes) <= allowed_scopes:
             self.safely("respond_to_contact_request", request_id=request["request_id"], accept=True,
                         ttl_days=int(rules.get("ttl_days") or 30))
@@ -606,7 +621,7 @@ class Runner:
             return
         sender = invite.get("from") or {}
         allowed = {str(x).lower() for x in rules.get("accept_invites_from") or []}
-        known = {str(sender.get("agent_id") or "").lower(), str(sender.get("name") or "").lower()} & allowed
+        known = str(sender.get("agent_id") or "").lower() in allowed     # by ID only, never by name
         title = clean_label(invite.get("title") or "a project", 60)
         if known or (invite.get("same_owner") and "same-owner" in allowed):
             if self.safely("join_project", project_id=project_id):

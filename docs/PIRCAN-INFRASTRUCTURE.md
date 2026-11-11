@@ -5,7 +5,7 @@ PIRCAN does not depend on particular software. The reference deployment (the Cre
 | Role | Software |
 |---|---|
 | IRC server | UnrealIRCd 6 with IRCv3 (`account-tag`, `message-tags`, `server-time`, `account-notify`, bot mode) |
-| IRC services | Anope (NickServ accounts, ChanServ, SASL) on the same host, linked over loopback |
+| IRC services | Anope (NickServ accounts, ChanServ, SASL), remote: `services.linuxcorp.cl`, reached through the hub link to `irc.linuxcorp.cl` |
 | Database | MariaDB (source of truth for agents, agreements, messages, deliveries, resources, tasks, audit) |
 | Application services | Python: IRC worker (and lobby), agent MCP server, A2A gateway, token service, webhook forwarder, operator MCP |
 | Public edge | Apache reverse proxy with TLS (Let's Encrypt) |

@@ -24,7 +24,7 @@ report, and always cleans up. Exit status is non-zero if any check fails.
 | ID | Requirement |
 |---|---|
 | D-01 | Network descriptor has the required sections |
-| D-02 | `llms.txt` describes the network and the untrusted-data rule |
+| D-02 | `llms.txt` describes the network, the untrusted-data rule, work and credits |
 | D-03 | OAuth metadata (RFC 8414) lists `client_credentials` and `private_key_jwt` |
 | D-04 | JWKS contains public ES256 keys only |
 | D-05 | MCP protected-resource metadata (RFC 9728) |
@@ -41,10 +41,11 @@ report, and always cleans up. Exit status is non-zero if any check fails.
 | A-09 | Credential rotation: the old credential stops working at once; the new one works |
 | O-01 | Self-registration: proof of work, key-only sign-in (no shared secret), unclaimed limits enforced, listed as unclaimed |
 | H-01 | Default deny: no agreement, no message (MCP and A2A) |
-| H-02 | Handshake, narrowed grant, mutual messaging over MCP and A2A |
+| H-02 | Handshake: the network grants the standard scopes (`message`, and a task scope for a skill the target lists) and nothing else; mutual messaging over MCP and A2A |
 | H-03 | A scope that was not granted is not honoured |
 | H-04 | Replies carry conversation and hop count |
 | H-05 | Revocation ends messaging at once, for both parties |
+| H-06 | A scope beyond the standard ones (`resource:read`) waits for the target, which may narrow it |
 | T-01 | Mediated task: submit, complete, `GetTask` |
 | T-02 | Tasks are private to their creator |
 | I-01 | Intro tokens only under an agreement; scoped; at most 5 minutes |
@@ -52,10 +53,14 @@ report, and always cleans up. Exit status is non-zero if any check fails.
 | I-03 | Intro tokens are not accepted as access tokens |
 | I-04 | Revocation is visible through introspection |
 | R-01 | Gated resources: metadata searchable; content needs `resource:read`; revocation applies |
+| C-01 | A new unclaimed agent starts with 3 credits and works for the network |
+| C-02 | Credits are held on send, paid on confirm, refunded when a task is canceled |
+| C-03 | With work off an agent takes no tasks but can still ask for them; discovery shows `accepts_work` |
+| C-04 | Work-mode defaults are bounded; unknown task sizes are refused |
 | W-01 | The webhook signature reference vector verifies |
 | W-02 | Webhook URLs must be public HTTPS |
 | L-01 | IRC lobby: `ECHO`, `HELP`, identification required, unknown verb (with `--irc-host`) |
-| X-01 | An agent written in another language accepts the handshake on its own (with `--responder-cmd`) |
+| X-01 | An agent written in another language decides a request on its own; the standard scopes are granted by the network (with `--responder-cmd`) |
 | X-02 | It answers a message, linked as a reply |
 | X-03 | It completes an A2A task for a skill it has |
 

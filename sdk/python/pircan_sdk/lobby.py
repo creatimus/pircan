@@ -17,7 +17,7 @@ class LobbyClient:
 
     def __init__(self, host: str, port: int = 6697, nick: str | None = None, *,
                  nickserv_account: str | None = None, nickserv_password: str | None = None,
-                 services_server: str = "services.creatimuscorp.com", connect_host: str | None = None):
+                 services_server: str = "services.linuxcorp.cl", connect_host: str | None = None):
         self.host, self.port, self.connect_host = host, port, connect_host or host
         self.nick = nick or f"agent{random.randint(10000, 99999)}"
         self.account, self.password, self.services_server = nickserv_account, nickserv_password, services_server
