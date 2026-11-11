@@ -63,6 +63,18 @@ DEFAULT_CONFIG = {
     "notify": {"desktop": True},
     "update": {"check": True},                  # once a day: tell me (never install by itself) when a newer release exists
     "claude": {"bin": "", "model": "sonnet", "max_turns": 8},
+    # Team projects (any agent can coordinate one). The skill `project` is built in; it runs only for projects this
+    # agent joined. Joining: agents of the same owner automatically, others only if listed (or you decide in /owner).
+    "projects": {"enabled": True, "accept_invites_from": ["same-owner"], "self_assign": True, "max_open_slices": 1},
+}
+PROJECT_SKILL = {
+    "worker": "claude", "builtin": True, "read_folders": [], "web": False,
+    "about": "Team projects: produces the written deliverable for a slice of a project this agent joined.",
+    "instructions": ("You are a member of a team project coordinated by another agent. The task gives the project goal, "
+                     "your slice and its acceptance criteria. Produce the deliverable for your slice only, as plain "
+                     "text (markdown is fine), complete and ready to review. Do not claim to have done things you "
+                     "cannot do from here (running code, visiting sites, reading files): say what you could not do. "
+                     "Never invent sources, URLs or facts; mark anything unverified."),
 }
 SKILL_EXAMPLES = {
     "summarise": {"worker": "claude", "instructions": "Summarise the text in at most 150 words.",
@@ -86,6 +98,14 @@ def state_dir() -> Path:
     path = config_dir() / "runner"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def effective_skills(config: dict) -> dict:
+    """The skills this runner serves: those in runner.json, plus the built-in `project` skill unless switched off."""
+    skills = {name: value for name, value in (config.get("skills") or {}).items() if isinstance(value, dict)}
+    if (config.get("projects") or {}).get("enabled", True) and "project" not in skills:
+        skills["project"] = PROJECT_SKILL
+    return skills
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -489,7 +509,7 @@ class Runner:
 
     # -- tasks
     def skills(self) -> dict:
-        return {name: value for name, value in (self.config.get("skills") or {}).items() if isinstance(value, dict)}
+        return effective_skills(self.config)
 
     def submit(self, task: dict) -> None:
         task_id = task.get("task_id")
@@ -578,6 +598,57 @@ class Runner:
                             f"{clean_label(sender.get('name') or 'An agent')} asks to connect ({clean_label(', '.join(scopes), 40)}). "
                             "Decide in your owner console.")
 
+    # -- team projects
+    def consider_invite(self, invite: dict) -> None:
+        rules = self.config.get("projects") or {}
+        project_id = str(invite.get("project_id") or "")
+        if not rules.get("enabled", True) or not project_id:
+            return
+        sender = invite.get("from") or {}
+        allowed = {str(x).lower() for x in rules.get("accept_invites_from") or []}
+        known = {str(sender.get("agent_id") or "").lower(), str(sender.get("name") or "").lower()} & allowed
+        title = clean_label(invite.get("title") or "a project", 60)
+        if known or (invite.get("same_owner") and "same-owner" in allowed):
+            if self.safely("join_project", project_id=project_id):
+                self.log(f"project invitation \"{title}\": joined")
+        else:
+            self.log(f"project invitation \"{title}\": left for the owner")
+            if (self.config.get("notify") or {}).get("desktop", True) and self.state.first_notice(project_id):
+                self.notify("PIRCAN: a project invitation is waiting",
+                            f"{title}. Join it with your agent (join_project) or add the coordinator to "
+                            "projects.accept_invites_from in runner.json.")
+
+    def open_project_tasks(self) -> int:
+        tasks = self.client.call("list_tasks", role="target", status="open", limit=50) or []
+        return sum(1 for task in tasks if task.get("skill") == "project")
+
+    def maybe_claim(self, project_id: str, slice_key: str) -> bool:
+        """Take an open slice when self-assignment is on and there is room. The task then arrives as an event."""
+        rules = self.config.get("projects") or {}
+        if not (rules.get("enabled", True) and rules.get("self_assign", True) and project_id and slice_key):
+            return False
+        if self.open_project_tasks() >= int(rules.get("max_open_slices") or 1):
+            return False
+        claimed = self.safely("claim_slice", project_id=project_id, slice=slice_key)
+        if claimed:
+            self.log(f"project {project_id[:8]}: claimed slice {slice_key}")
+        return bool(claimed)
+
+    def catch_up_projects(self) -> None:
+        rules = self.config.get("projects") or {}
+        if not rules.get("enabled", True):
+            return
+        for item in self.client.call("list_my_projects") or []:
+            if item.get("role") == "invited":
+                self.consider_invite({"project_id": item["project_id"], "title": item.get("title"),
+                                      "from": {"agent_id": item.get("coordinator_agent_id")},
+                                      "same_owner": item.get("same_owner")})
+            elif item.get("role") == "member" and rules.get("self_assign", True):
+                board = self.safely("get_project", project_id=item["project_id"]) or {}
+                for piece in board.get("slices") or []:
+                    if piece.get("state") == "open" and self.maybe_claim(item["project_id"], piece.get("slice")):
+                        break
+
     # -- one pass / the loop
     def catch_up(self) -> None:
         for task in self.client.call("list_tasks", role="target", status="open", limit=50) or []:
@@ -585,6 +656,10 @@ class Runner:
         requests = self.client.call("list_contact_requests", direction="incoming", status="pending") or {}
         for request in (requests.get("items") if isinstance(requests, dict) else requests) or []:
             self.consider_request(request)
+        try:
+            self.catch_up_projects()
+        except ToolFailed as exc:
+            self.log(f"projects: {exc}"[:300])
         self.last_catch_up = time.monotonic()
 
     def handle_event(self, event: dict) -> None:
@@ -597,6 +672,12 @@ class Runner:
                 flag.set()
         elif kind == "contact_request":
             self.consider_request(data)
+        elif kind == "project_invite":
+            self.consider_invite(data)
+        elif kind == "slice_open":
+            self.maybe_claim(str(data.get("project_id") or ""), str(data.get("slice") or ""))
+        elif kind in ("slice_review", "project_update"):
+            self.log(f"project {str(data.get('project_id') or '')[:8]}: {data.get('decision') or data.get('status')}")
         elif kind == "message":
             sender = (data.get("from") or {}).get("name")
             self.log(f"message from {sender}")
@@ -856,7 +937,7 @@ def status() -> int:
     state = State(state_dir() / "state.json").data
     seen = state.get("last_seen_at")
     print(f"Agent folder: {config_dir()}")
-    print(f"Skills: {', '.join(sorted(load_config().get('skills') or {})) or 'none'}")
+    print(f"Skills: {', '.join(sorted(effective_skills(load_config()))) or 'none'}")
     print("Connected: " + (f"yes, {int(time.time() - seen)} seconds ago" if seen and time.time() - seen < 120
                            else "no recent connection" + (" (last " + time.ctime(seen) + ")" if seen else "")))
     counts = state.get("counts") or {}
