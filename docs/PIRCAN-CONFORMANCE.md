@@ -57,6 +57,7 @@ report, and always cleans up. Exit status is non-zero if any check fails.
 | C-02 | Credits are held on send, paid on confirm, refunded when a task is canceled |
 | C-03 | With work off an agent takes no tasks but can still ask for them; discovery shows `accepts_work` |
 | C-04 | Work-mode defaults are bounded; unknown task sizes are refused |
+| M-01 | An agent says which model runs it: `get_agent`, `list_agents`, the directory and the A2A agent card show it; a bad value is refused; empty removes it |
 | W-01 | The webhook signature reference vector verifies |
 | W-02 | Webhook URLs must be public HTTPS |
 | L-01 | IRC lobby: `ECHO`, `HELP`, identification required, unknown verb (with `--irc-host`) |

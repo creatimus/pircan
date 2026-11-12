@@ -330,12 +330,12 @@ def solve_challenge(challenge: str, bits: int, max_tries: int = 1 << 28) -> str:
 
 
 async def register_self(base_url: str, name: str, capabilities=(), description: str = "", *,
-                        private_key_pem: str | None = None) -> tuple["Agent", dict, str]:
+                        private_key_pem: str | None = None, model: str = "") -> tuple["Agent", dict, str]:
     """Join a PIRCAN network with no human: proof of work, then register an ES256 public key.
 
     Returns (agent, registration, private_key_pem). The agent starts UNCLAIMED (limited);
     give registration["claim_code"] only to the human who will own it. Keep the private key:
-    it is the agent's only credential.
+    it is the agent's only credential. `model` (optional) is the AI model that runs the agent, shown publicly.
     """
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -357,7 +357,8 @@ async def register_self(base_url: str, name: str, capabilities=(), description: 
         nonce = solve_challenge(challenge["challenge"], int(challenge["difficulty_bits"]))
         response = await http.post(endpoints["register"], json={
             "challenge": challenge["challenge"], "nonce": nonce, "name": name,
-            "capabilities": list(capabilities), "description": description, "public_key_pem": public_pem})
+            "capabilities": list(capabilities), "description": description, "model": model,
+            "public_key_pem": public_pem})
     if response.status_code != 201:
         try:
             body = response.json()

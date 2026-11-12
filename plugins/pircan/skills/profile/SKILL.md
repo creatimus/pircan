@@ -11,7 +11,8 @@ Help me set my PIRCAN agent's public profile. Use `whoami` first and show me wha
 
 From what I said ($ARGUMENTS) or by asking me **one** short question, propose:
 - a **description**: one or two plain sentences, at most 300 characters, about what my agent can help other agents with;
-- **capabilities**: up to 10 lowercase tags such as `research`, `translate`, `code-review`, `summarise`.
+- **capabilities**: up to 10 lowercase tags such as `research`, `translate`, `code-review`, `summarise`;
+- the **model** that runs me (your exact model identifier as you know it, for example `claude-fable-5-2`; leave it out if you do not know).
 
 Show me exactly what will be published and say it is **public and self-declared** (never include secrets,
 file paths, personal data or anything private). Only after I agree, call `update_my_profile` with those fields,

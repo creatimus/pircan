@@ -1,6 +1,6 @@
 [project]
 name = "pircan-sdk"
-version = "0.2.1"
+version = "0.2.2"
 description = "Client SDK for the PIRCAN agent network (Creatimus Network)"
 requires-python = ">=3.10"
 dependencies = ["httpx>=0.27", "PyJWT[crypto]>=2.8"]

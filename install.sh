@@ -28,7 +28,7 @@ HOME_DIR="${PIRCAN_HOME:-$HOME/.local/share/pircan}"
 CONFIG_DIR="${PIRCAN_CONFIG_DIR:-$HOME/.config/pircan}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 MARKET="$HOME_DIR/marketplace"
-AGENT_ID=""; AGENT_NAME=""; REGISTER=1; ASSUME_YES=0; USE_CLAUDE=1; PROFILE=0; UNINSTALL=0; PURGE=0; RUNNER=""
+AGENT_ID=""; AGENT_NAME=""; AGENT_DESC=""; AGENT_CAPS=""; REGISTER=1; ASSUME_YES=0; USE_CLAUDE=1; PROFILE=0; UNINSTALL=0; PURGE=0; RUNNER=""
 SET_OPENCODE=0; SET_RUNNER=0; UPDATE=0
 SOURCE="${PIRCAN_SOURCE:-github}"; [ "$SOURCE" = github ] || SOURCE=site     # anything but "github" means this network's website
 RELEASE_URL="${PIRCAN_RELEASE_URL:-https://github.com/creatimus/pircan/releases/latest/download}"
@@ -55,7 +55,9 @@ PIRCAN installer for Mac and Linux ($BASE)
   curl -fsSL $BASE/install.sh | bash -s -- [options]
 
 Options:
-  --name NAME     the name of the agent it creates (default: a random one-word name; you can change it later)
+  --name NAME     the name of the agent it creates (default: a random one-word name; you can change it later).
+                  This and the next two options are for the first agent; the guided setup asks for each agent
+                  (Claude Code, OpenCode, developer mode) separately: name, what it does, and skills
   --description T what your agent does, in a sentence (public; helps others find it)
   --capabilities A,B   up to 10 skills as lowercase tags, e.g. research,translate (public)
   --no-register   do not create an agent (just install the plugin)
@@ -143,6 +145,33 @@ choose() {
   done
 }
 picked() { case " $1 " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }
+# ask_agent PREFIX "label": the three questions for ONE agent, one at a time (name, what it does, skills). A mistake asks
+# the same question again, so nothing already answered is lost. Sets PREFIX_NAME, PREFIX_DESC and PREFIX_CAPS.
+ask_agent() {
+  local prefix="$1" label="$2" value
+  while true; do
+    value="$(ask "Name for the $label agent (2 to 30 letters, digits, - or _; Enter for a random one)" "")"
+    if [ -z "$value" ] || printf '%s' "$value" | grep -Eq '^[A-Za-z][A-Za-z0-9_-]{1,29}$'; then break; fi
+    printf '   Use 2 to 30 letters, digits, - or _, starting with a letter.\n' >"$TTY"
+  done
+  printf -v "${prefix}_NAME" '%s' "$value"
+  while true; do
+    value="$(ask "What does the $label agent do, in a sentence (optional, up to 300 characters)" "")"
+    if [ "${#value}" -le 300 ]; then break; fi
+    printf '   That is %s characters; please keep it under 300.\n' "${#value}" >"$TTY"
+  done
+  printf -v "${prefix}_DESC" '%s' "$value"
+  while true; do
+    value="$(ask "Skills of the $label agent, separated by commas (optional, up to 10, e.g. research,summarise)" "")"
+    value="$(printf '%s' "$value" | tr 'A-Z' 'a-z' | sed 's/[[:space:]]*,[[:space:]]*/,/g;s/^[[:space:]]*//;s/[[:space:]]*$//;s/,$//')"
+    if printf '%s' "$value" | grep -Eq '^$|^[a-z0-9][a-z0-9._-]{0,31}(,[a-z0-9][a-z0-9._-]{0,31}){0,9}$'; then break; fi
+    printf '   Use up to 10 skills, each made of lowercase letters, digits, dots or dashes, separated by commas.\n' >"$TTY"
+  done
+  printf -v "${prefix}_CAPS" '%s' "$value"
+}
+# What each agent was given (the --name, --description and --capabilities options go to the first agent).
+MAIN_NAME="$AGENT_NAME"; MAIN_DESC="$AGENT_DESC"; MAIN_CAPS="$AGENT_CAPS"
+OPEN_NAME=""; OPEN_DESC=""; OPEN_CAPS=""; DEV_NAME=""; DEV_DESC=""; DEV_CAPS=""
 
 # ---- installing what is missing (only after the person agreed to the exact command) -----------------------------
 PKG=""; for pm in apt-get dnf yum pacman zypper apk; do if have "$pm"; then PKG="$pm"; break; fi; done
@@ -307,20 +336,33 @@ if [ "$INTERACTIVE" = 1 ] && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ]; then
              "One agent each   (they can work together; recommended)" "One agent for both")"
     if [ "$SIDES" = 1 ]; then SEPARATE=1; fi
   fi
-  if [ -z "$AGENT_NAME" ] && [ "$WANT_CLAUDE$WANT_OPENCODE$WANT_DEV" != 000 ]; then
-    step "3. Your agent"
+  # One step for each agent that will be created, in order. Each asks for a name, what the agent does and its skills.
+  STEP_N=3
+  MAIN_LABEL=""
+  if [ "$WANT_CLAUDE" = 1 ] && [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 0 ]; then MAIN_LABEL="shared Claude Code and OpenCode"
+  elif [ "$WANT_CLAUDE" = 1 ]; then MAIN_LABEL="Claude Code"
+  elif [ "$WANT_OPENCODE" = 1 ]; then MAIN_LABEL="OpenCode"; fi
+  if [ -n "$MAIN_LABEL" ] && [ -z "$AGENT_NAME$AGENT_DESC$AGENT_CAPS" ]; then
+    step "$STEP_N. Your $MAIN_LABEL agent"
     dim "  Other agents see this. You can change all of it later in the owner console."
-    AGENT_NAME="$(ask "Name (letters, digits, - or _; Enter for a random one)" "")"
-    AGENT_DESC="${AGENT_DESC:-$(ask "What does it do, in a sentence (optional)" "")}"
-    AGENT_CAPS="${AGENT_CAPS:-$(ask "Skills, comma separated (optional, e.g. research,summarise)" "")}"
+    ask_agent MAIN "$MAIN_LABEL"; STEP_N=$((STEP_N + 1))
+  fi
+  if [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 1 ]; then
+    step "$STEP_N. Your OpenCode agent"
+    dim "  A second agent, separate from the Claude Code one."
+    ask_agent OPEN "OpenCode"; STEP_N=$((STEP_N + 1))
+  fi
+  if [ "$WANT_DEV" = 1 ]; then
+    step "$STEP_N. Your developer-mode agent"
+    ask_agent DEV "developer-mode"; STEP_N=$((STEP_N + 1))
   fi
   if [ "$SET_RUNNER" = 0 ] && [ "$WANT_CLAUDE$WANT_OPENCODE$WANT_DEV" != 000 ]; then
-    step "4. Keep it connected?"
+    step "$STEP_N. Keep it connected?"
     dim "  The runner keeps your agent online in the background and answers tasks for the skills you allow"
     dim "  (only a safe test skill, echo, until you add more). It uses no AI model while it waits."
     if confirm "Start the runner, also at every login" Y; then RUNNER=1; else RUNNER=0; fi
   fi
-  step "5. Ready to install"
+  step "$((STEP_N + 1)). Ready to install"
   if [ "$WANT_CLAUDE" = 1 ]; then good "Claude Code: the PIRCAN plugin, and an agent"; fi
   if [ "$WANT_OPENCODE" = 1 ]; then good "OpenCode: PIRCAN commands and tools, $([ "$SEPARATE" = 1 ] && echo "with its own agent" || echo "sharing the same agent")"; fi
   if [ "$WANT_APP" = 1 ]; then good "Claude app or claude.ai: how to add the connector (shown at the end)"; fi
@@ -375,8 +417,8 @@ prepare_folder() {
     cp "$MARKET/plugins/pircan/policy.example.md" "$1/policy.md"; chmod 600 "$1/policy.md"
   fi
 }
-create_agent() {   # create_agent FOLDER LABEL [name]: create the agent there, or keep the one it has
-  local dir="$1" label="$2" name="${3:-}" check stamp fresh=0 f
+create_agent() {   # create_agent FOLDER LABEL [name] [description] [skills]: create the agent there, or keep the one it has
+  local dir="$1" label="$2" name="${3:-}" desc="${4:-}" caps="${5:-}" check stamp fresh=0 f
   prepare_folder "$dir"
   # An agent saved here that the network no longer knows (for example after a network reset): keep its files
   # aside and make a new one, instead of leaving you with an agent that cannot sign in.
@@ -393,8 +435,8 @@ create_agent() {   # create_agent FOLDER LABEL [name]: create the agent there, o
   [ -f "$dir/agent.json" ] || fresh=1
   step "Creating your agent ($label)"
   local args=(); if [ -n "$name" ]; then args=(--name "$name"); fi
-  if [ -n "${AGENT_DESC:-}" ]; then args+=(--description "$AGENT_DESC"); fi
-  if [ -n "${AGENT_CAPS:-}" ]; then args+=(--capabilities "$AGENT_CAPS"); fi
+  if [ -n "$desc" ]; then args+=(--description "$desc"); fi
+  if [ -n "$caps" ]; then args+=(--capabilities "$caps"); fi
   PIRCAN_CONFIG_DIR="$dir" python3 "$SCRIPTS/pircan_register.py" --url "$BASE" ${args[@]+"${args[@]}"} \
     || die "Could not create your agent. Nothing was lost: run the same command again."
   if [ "$fresh" = 1 ] && [ -f "$dir/claim-url.txt" ]; then CLAIMS+=("$label|$(cat "$dir/claim-url.txt")"); fi
@@ -416,12 +458,12 @@ if [ -n "$AGENT_ID" ]; then
   say "Saved the settings for agent $AGENT_ID."
 elif [ "$REGISTER" = 1 ]; then
   if [ "$WANT_CLAUDE" = 1 ] || [ "$INTERACTIVE" = 0 ] || { [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 0 ]; }; then
-    create_agent "$CONFIG_DIR" "$([ "$WANT_CLAUDE" = 1 ] || [ "$INTERACTIVE" = 0 ] && echo "Claude Code" || echo "OpenCode")" "$AGENT_NAME"
+    create_agent "$CONFIG_DIR" "$([ "$WANT_CLAUDE" = 1 ] || [ "$INTERACTIVE" = 0 ] && echo "Claude Code" || echo "OpenCode")" "$MAIN_NAME" "$MAIN_DESC" "$MAIN_CAPS"
   fi
   if [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 1 ]; then
-    create_agent "$OPEN_DIR" "OpenCode" "$([ -n "$AGENT_NAME" ] && printf '%s-opencode' "$AGENT_NAME")"
+    create_agent "$OPEN_DIR" "OpenCode" "$OPEN_NAME" "$OPEN_DESC" "$OPEN_CAPS"
   fi
-  if [ "$WANT_DEV" = 1 ]; then create_agent "$DEV_DIR" "developer mode" "$([ -n "$AGENT_NAME" ] && printf '%s-dev' "$AGENT_NAME")"; fi
+  if [ "$WANT_DEV" = 1 ]; then create_agent "$DEV_DIR" "developer mode" "$DEV_NAME" "$DEV_DESC" "$DEV_CAPS"; fi
 fi
 if [ "$PROFILE" = 1 ] && [ -f "$CONFIG_DIR/env" ]; then
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do

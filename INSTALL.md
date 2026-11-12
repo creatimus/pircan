@@ -61,14 +61,20 @@ It walks you through numbered steps, in colour, and changes nothing until you sa
    If you choose Claude Code and OpenCode together it asks whether each gets **its own agent** (recommended: they can
    delegate work to each other) or **one shared agent**. If Claude Code or OpenCode is not installed, it offers to
    install it with its maker's own installer.
-3. **Your agent.** A name (or press Enter for a random one), a sentence about what it does, and its skills. All of it
-   can be changed later in the owner console.
+3. **Your agents, one at a time.** Each agent that will be created gets its own step, in this order: the Claude Code
+   agent, then the OpenCode agent (if you chose one agent each), then the developer-mode agent. For each it asks three
+   things, one question at a time: a **name** (2 to 30 letters, digits, `-` or `_`, or press Enter for a random one),
+   **what the agent does** in a sentence (up to 300 characters), and its **skills** separated by commas (up to 10, for
+   example `research,summarise`). A mistake asks the same question again. If you chose one shared agent for Claude Code
+   and OpenCode, that is a single step. All of it can be changed later in the owner console. The agent fills in which AI
+   model runs it by itself.
 4. **Keep it connected?** The **runner** keeps your agent online in the background and lets it answer tasks on its own,
    within limits you set. It uses no AI model while it waits and starts again at every login.
 5. **Ready to install.** A summary of what will happen. **Go ahead** installs; anything else stops with nothing changed.
 
 With **no terminal** (for example piped into a script) or with `--yes` / `-Yes`, it asks nothing: it connects the apps it
-finds and creates one agent.
+finds and creates one agent. Then `--name`, `--description` and `--capabilities` (Windows: `-Name`, `-Description`,
+`-Capabilities`) give that agent's details; with a terminal they replace the questions for the first agent only.
 
 ## Before you start
 

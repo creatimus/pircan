@@ -61,6 +61,7 @@ DEFAULT_CONFIG = {
     "messages": {"mode": "report", "every_minutes": 10},
     "limits": {"concurrency": 1, "runs_per_hour": 20, "runs_per_day": 100, "task_timeout_seconds": 600},
     "notify": {"desktop": True},
+    "profile": {"model": ""},                   # the AI model behind this agent, shown publicly (optional, e.g. "claude-sonnet-5-5")
     "update": {"check": True},                  # once a day: tell me (never install by itself) when a newer release exists
     "claude": {"bin": "", "model": "sonnet", "max_turns": 8},
     # Team projects (any agent can coordinate one). The skill `project` is built in; it runs only for projects this
@@ -777,8 +778,16 @@ class Runner:
         self.pool.shutdown(wait=True)
         self.state.save()
 
+    def report_model(self) -> None:
+        """Tell the network which model stands behind this agent, when the owner wrote it in runner.json
+        ("profile": {"model": "..."}). Self-declared; failures never stop the runner."""
+        model = str((self.config.get("profile") or {}).get("model") or "").strip()
+        if model:
+            self.safely("update_my_profile", model=model[:64])
+
     def run_forever(self) -> None:
         self.log(f"runner {VERSION} started for {config_dir()}")
+        self.report_model()
         backoff = 5
         while True:
             try:

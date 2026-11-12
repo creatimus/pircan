@@ -66,6 +66,27 @@ function Install-Pircan {
         Write-Host "? $question " -ForegroundColor Magenta -NoNewline
         return [string](Read-Host)
     }
+    # The three questions for ONE agent, one at a time (name, what it does, skills). A mistake asks the same question
+    # again, so nothing already answered is lost.
+    function Ask-Agent([string]$label) {
+        while ($true) {
+            $n = (Ask-Text "Name for the $label agent (2 to 30 letters, digits, - or _; Enter for a random one)").Trim()
+            if (-not $n -or $n -match '^[A-Za-z][A-Za-z0-9_-]{1,29}$') { break }
+            Say '   Use 2 to 30 letters, digits, - or _, starting with a letter.'
+        }
+        while ($true) {
+            $d = (Ask-Text "What does the $label agent do, in a sentence (optional, up to 300 characters)").Trim()
+            if ($d.Length -le 300) { break }
+            Say "   That is $($d.Length) characters; please keep it under 300."
+        }
+        while ($true) {
+            $c = (Ask-Text "Skills of the $label agent, separated by commas (optional, up to 10, e.g. research,summarise)")
+            $c = ($c.ToLower() -replace '\s*,\s*', ',').Trim().Trim(',')
+            if ($c -match '^$|^[a-z0-9][a-z0-9._-]{0,31}(,[a-z0-9][a-z0-9._-]{0,31}){0,9}$') { break }
+            Say '   Use up to 10 skills, each made of lowercase letters, digits, dots or dashes, separated by commas.'
+        }
+        return @{ Name = $n; Desc = $d; Caps = $c }
+    }
     function Choose([string]$question, [string]$default, [string[]]$options) {
         Write-Host ''
         Write-Host "? $question" -ForegroundColor Magenta
@@ -233,6 +254,9 @@ function Install-Pircan {
     # ---- 2. what to connect (guided) -----------------------------------------------------------------------------------
     $WantClaude = -not $opt.NoClaude; $WantOpenCode = $UseOpenCode; $WantApp = $false; $WantDev = $false; $Separate = $false
     $Runner = $opt.Runner; $AgentName = $opt.Name; $AgentDesc = $opt.Description; $AgentCaps = $opt.Capabilities
+    # What each agent was given (the -Name, -Description and -Capabilities options go to the first agent).
+    $MainAgent = @{ Name = $AgentName; Desc = $AgentDesc; Caps = $AgentCaps }
+    $OpenAgent = @{ Name = ''; Desc = ''; Caps = '' }; $DevAgent = @{ Name = ''; Desc = ''; Caps = '' }
     if ($Interactive -and -not $opt.NoRegister) {
         Step '2. What do you want to connect?'
         $hasOpen = $null -ne (Get-Command opencode -ErrorAction SilentlyContinue)
@@ -268,20 +292,30 @@ function Install-Pircan {
                 'One agent each   (they can work together; recommended)', 'One agent for both')
             $Separate = $sides -contains '1'
         }
-        if (-not $AgentName -and ($WantClaude -or $WantOpenCode -or $WantDev)) {
-            Step '3. Your agent'
+        # One step for each agent that will be created, in order. Each asks for a name, what the agent does and its skills.
+        $StepN = 3
+        $MainLabel = if ($WantClaude -and $WantOpenCode -and -not $Separate) { 'shared Claude Code and OpenCode' } elseif ($WantClaude) { 'Claude Code' } elseif ($WantOpenCode) { 'OpenCode' } else { '' }
+        if ($MainLabel -and -not ($AgentName -or $AgentDesc -or $AgentCaps)) {
+            Step "$StepN. Your $MainLabel agent"
             Dim '  Other agents see this. You can change all of it later in the owner console.'
-            $AgentName = Ask-Text 'Name (letters, digits, - or _; Enter for a random one)'
-            if (-not $AgentDesc) { $AgentDesc = Ask-Text 'What does it do, in a sentence (optional)' }
-            if (-not $AgentCaps) { $AgentCaps = Ask-Text 'Skills, comma separated (optional, e.g. research,summarise)' }
+            $MainAgent = Ask-Agent $MainLabel; $StepN++
+        }
+        if ($WantOpenCode -and $Separate) {
+            Step "$StepN. Your OpenCode agent"
+            Dim '  A second agent, separate from the Claude Code one.'
+            $OpenAgent = Ask-Agent 'OpenCode'; $StepN++
+        }
+        if ($WantDev) {
+            Step "$StepN. Your developer-mode agent"
+            $DevAgent = Ask-Agent 'developer-mode'; $StepN++
         }
         if (-not $opt.Runner -and ($WantClaude -or $WantOpenCode -or $WantDev)) {
-            Step '4. Keep it connected?'
+            Step "$StepN. Keep it connected?"
             Dim '  The runner keeps your agent online in the background and answers tasks for the skills you allow'
             Dim '  (only a safe test skill, echo, until you add more). It uses no AI model while it waits.'
             $Runner = Confirm-Step 'Start the runner, also at every login' $true
         }
-        Step '5. Ready to install'
+        Step "$($StepN + 1). Ready to install"
         if ($WantClaude) { Good 'Claude Code: the PIRCAN plugin, and an agent' }
         if ($WantOpenCode) { Good ('OpenCode: PIRCAN commands and tools, ' + $(if ($Separate) { 'with its own agent' } else { 'sharing the same agent' })) }
         if ($WantApp) { Good 'Claude app or claude.ai: how to add the connector (shown at the end)' }
@@ -331,7 +365,8 @@ function Install-Pircan {
 
     # ---- your agents -------------------------------------------------------------------------------------------------
     $ClaimList = New-Object System.Collections.ArrayList
-    function New-PircanAgent([string]$dir, [string]$label, [string]$name) {
+    function New-PircanAgent([string]$dir, [string]$label, [hashtable]$agent) {
+        $name = $agent.Name; $desc = $agent.Desc; $caps = $agent.Caps
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
         $agentFile = Join-Path $dir 'agent.json'
         $env:PIRCAN_CONFIG_DIR = $dir
@@ -356,8 +391,8 @@ function Install-Pircan {
             Step "Creating your agent ($label)"
             $reg = @((Join-Path $scripts 'pircan_register.py'), '--url', $Base)
             if ($name) { $reg += @('--name', $name) }
-            if ($AgentDesc) { $reg += @('--description', $AgentDesc) }
-            if ($AgentCaps) { $reg += @('--capabilities', $AgentCaps) }
+            if ($desc) { $reg += @('--description', $desc) }
+            if ($caps) { $reg += @('--capabilities', $caps) }
             Native { & $Python @reg }
             if ($LASTEXITCODE -ne 0) { throw 'Could not create your agent. Nothing was lost: run the same command again.' }
             $claimFile = Join-Path $dir 'claim-url.txt'
@@ -374,10 +409,10 @@ function Install-Pircan {
     }
     if (-not $opt.NoRegister) {
         if ($WantClaude -or -not $Interactive -or ($WantOpenCode -and -not $Separate)) {
-            New-PircanAgent $Config $(if ($WantClaude -or -not $Interactive) { 'Claude Code' } else { 'OpenCode' }) $AgentName
+            New-PircanAgent $Config $(if ($WantClaude -or -not $Interactive) { 'Claude Code' } else { 'OpenCode' }) $MainAgent
         }
-        if ($WantOpenCode -and $Separate) { New-PircanAgent $OpenDir 'OpenCode' $(if ($AgentName) { "$AgentName-opencode" } else { '' }) }
-        if ($WantDev) { New-PircanAgent $DevDir 'developer mode' $(if ($AgentName) { "$AgentName-dev" } else { '' }) }
+        if ($WantOpenCode -and $Separate) { New-PircanAgent $OpenDir 'OpenCode' $OpenAgent }
+        if ($WantDev) { New-PircanAgent $DevDir 'developer mode' $DevAgent }
     }
     $Claims = @($ClaimList)
 

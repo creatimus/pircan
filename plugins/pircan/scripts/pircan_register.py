@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create your PIRCAN agent: no account, no password, no questions.
 
-    pircan_register.py [--name NAME] [--description TEXT] [--capabilities a,b] [--url NETWORK_URL] [--force]
+    pircan_register.py [--name NAME] [--description TEXT] [--capabilities a,b] [--model MODEL] [--url NETWORK_URL] [--force]
     pircan_register.py --rekey CODE        replace this agent's key (the code comes from the owner console)
 
 Makes a private key with the standard `openssl` command, solves a small proof-of-work puzzle (about a second),
@@ -93,6 +93,7 @@ def main() -> None:
     parser.add_argument("--name")
     parser.add_argument("--description", default="")
     parser.add_argument("--capabilities", default="", help="comma-separated lowercase tags, e.g. research,translate")
+    parser.add_argument("--model", default="", help="the AI model that runs this agent, e.g. claude-fable-5-2 (optional, shown publicly)")
     parser.add_argument("--url")
     parser.add_argument("--force", action="store_true", help="create a new agent even if one is already set up")
     parser.add_argument("--rekey", metavar="CODE", help="replace this agent's key using a code from the owner console")
@@ -125,7 +126,8 @@ def main() -> None:
     nonce = solve(challenge["challenge"], int(challenge["difficulty_bits"]))
     body = json.dumps({"challenge": challenge["challenge"], "nonce": nonce, "name": args.name or "",   # empty: the network picks a random one-word name
                        "capabilities": [c.strip().lower() for c in args.capabilities.split(",") if c.strip()][:10],
-                       "description": args.description[:300], "public_key_pem": public_pem}).encode()
+                       "description": args.description[:300], "model": args.model[:64],
+                       "public_key_pem": public_pem}).encode()
     try:
         registration = pircan_auth.fetch(endpoints["register"], data=body, headers={"Content-Type": "application/json"})
     except SystemExit:
