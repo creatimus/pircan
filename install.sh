@@ -223,26 +223,57 @@ offer_missing() {   # guided only: offer to install curl, tar, python3, openssl 
 }
 
 # ---- uninstall --------------------------------------------------------------------------------------------------------
-if [ "$UNINSTALL" = 1 ]; then
-  step "Removing PIRCAN"
+agent_name() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("name",""))' "$1/agent.json" 2>/dev/null || true; }
+AGENT_FOLDERS=("$CONFIG_DIR" "$HOME/.config/pircan-opencode" "$HOME/.config/pircan-dev")
+# list_agents: one line per agent kept on this computer; status 0 when there is at least one.
+list_agents() {
+  local d n found=1
+  for d in "${AGENT_FOLDERS[@]}"; do
+    if [ -f "$d/agent.json" ]; then n="$(agent_name "$d")"; say "     - ${n:-an agent}   ($d)"; found=0; fi
+  done
+  return $found
+}
+# remove_install 0|1: take PIRCAN off this computer. With 1 the agents' keys are deleted too (no way back).
+remove_install() {
+  local purge="$1" dir f
   if claude_ok; then
     "$CLAUDE_BIN" plugin uninstall pircan@creatimus >/dev/null 2>&1 && say "Plugin uninstalled." || say "Plugin was not installed."
     "$CLAUDE_BIN" plugin marketplace remove creatimus >/dev/null 2>&1 && say "Marketplace removed." || say "Marketplace was not added."
   fi
-  OC_DIR="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/command"
+  local OC_DIR="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/command"
   for f in "$OC_DIR"/pircan-*.md; do
     if [ -f "$f" ] && grep -q "written by the PIRCAN installer" "$f"; then rm -f "$f"; fi
   done
   if [ -f "$MARKET/plugins/pircan/scripts/pircan_runner.py" ] && have python3; then
-    for dir in "$CONFIG_DIR" "$HOME/.config/pircan-opencode" "$HOME/.config/pircan-dev"; do
+    for dir in "${AGENT_FOLDERS[@]}"; do
       if [ -d "$dir" ]; then python3 "$MARKET/plugins/pircan/scripts/pircan_runner.py" uninstall --config-dir "$dir" >/dev/null 2>&1 || true; fi
     done
   fi
   rm -rf "$HOME_DIR" && say "Removed $HOME_DIR"
+  if [ "$purge" = 1 ]; then
+    rm -rf "${AGENT_FOLDERS[@]}"
+    if [ -f "$HOME/pircan-dev/my_agent.py" ]; then rm -rf "$HOME/pircan-dev"; fi
+    for f in "$HOME/.bashrc" "$HOME/.zshrc"; do      # the lines the installer may have added (--profile)
+      if [ -f "$f" ] && grep -q 'pircan/env' "$f"; then
+        python3 - "$f" <<'PYEOF' || true
+import sys
+path = sys.argv[1]
+lines = open(path).read().split("\n")
+open(path, "w").write("\n".join(l for l in lines if "pircan/env" not in l and l.strip() != "# PIRCAN"))
+PYEOF
+      fi
+    done
+    say "Removed every agent folder on this computer ($CONFIG_DIR, pircan-opencode, pircan-dev): the keys are gone for good."
+    say "The agents themselves stay on the network until their owner deletes them (owner console, the agent's page, Delete agent)."
+  else say "Kept your agents' folders (use --purge to delete them too)."; fi
+}
+if [ "$UNINSTALL" = 1 ]; then
+  step "Removing PIRCAN"
   if [ "$PURGE" = 1 ]; then
-    rm -rf "$CONFIG_DIR" "$HOME/.config/pircan-opencode" "$HOME/.config/pircan-dev"
-    say "Removed $CONFIG_DIR (and the pircan-opencode and pircan-dev folders, if any): your agents' keys are gone for good."
-  else say "Kept $CONFIG_DIR (use --purge to delete it)."; fi
+    say "  Agents found on this computer:"; list_agents || say "     (none)"
+    if [ "$INTERACTIVE" = 1 ] && list_agents >/dev/null; then confirm "Delete these agents' keys for good" N || { say "Nothing was changed."; exit 0; }; fi
+  fi
+  remove_install "$PURGE"
   exit 0
 fi
 
@@ -273,13 +304,29 @@ if have opencode; then good "OpenCode found"; fi
 # An install that is already here is updated, not set up again: no questions, and nothing of yours is touched
 # (agents, keys, settings, handshakes). Fresh installs go through the guided setup below.
 installed_version() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$1" 2>/dev/null || true; }
+fresh_start() {
+  say ""; say "  Agents on this computer that would be deleted:"; list_agents || say "     (none; only the PIRCAN program files)"
+  if list_agents >/dev/null; then
+    say "  Their keys cannot be recovered, and those agents cannot be used again."
+    confirm "Delete everything and start fresh" N || { say "Nothing was changed."; exit 0; }
+  fi
+  step "Removing the old install"; remove_install 1
+}
 if [ "$UPDATE" = 0 ] && [ "$INTERACTIVE" = 1 ] && [ -f "$MARKET/.claude-plugin/marketplace.json" ] && [ -f "$CONFIG_DIR/agent.json" ] \
    && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ]; then
   say ""; say "  PIRCAN is already installed here (version $(installed_version "$MARKET/plugins/pircan/.claude-plugin/plugin.json"))."
   WHAT="$(choose "What do you want to do?" "1" "Update to the latest version   (keeps your agents, settings and handshakes; no questions)" \
-          "Run the full guided setup again   (to add or change something)" "Quit")"
+          "Run the full guided setup again   (to add or change something)" \
+          "Remove everything first, then set up fresh   (deletes the agents on this computer)" "Quit")"
   set -- $WHAT
-  case "${1:-1}" in 1) UPDATE=1 ;; 3) say "Nothing was changed."; exit 0 ;; esac
+  case "${1:-1}" in 1) UPDATE=1 ;; 3) fresh_start ;; 4) say "Nothing was changed."; exit 0 ;; esac
+elif [ "$UPDATE" = 0 ] && [ "$INTERACTIVE" = 1 ] && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ] && list_agents >/dev/null; then
+  # Leftovers of an earlier install (an uninstall without --purge, or another copy): offer a clean start first.
+  say ""; say "  An earlier PIRCAN install left agents on this computer:"; list_agents
+  WHAT="$(choose "What do you want to do?" "1" "Remove them first, then set up fresh   (recommended for a fresh start)" \
+          "Keep them and continue" "Quit")"
+  set -- $WHAT
+  case "${1:-1}" in 1) fresh_start ;; 3) say "Nothing was changed."; exit 0 ;; esac
 fi
 if [ "$UPDATE" = 1 ]; then
   [ -f "$MARKET/.claude-plugin/marketplace.json" ] || die "PIRCAN is not installed here yet ($MARKET). Run the installer without --update first."
@@ -441,7 +488,6 @@ create_agent() {   # create_agent FOLDER LABEL [name] [description] [skills]: cr
     || die "Could not create your agent. Nothing was lost: run the same command again."
   if [ "$fresh" = 1 ] && [ -f "$dir/claim-url.txt" ]; then CLAIMS+=("$label|$(cat "$dir/claim-url.txt")"); fi
 }
-agent_name() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("name",""))' "$1/agent.json" 2>/dev/null || true; }
 
 OPEN_DIR="$CONFIG_DIR"; if [ "$SEPARATE" = 1 ]; then OPEN_DIR="$HOME/.config/pircan-opencode"; fi
 DEV_DIR="$HOME/.config/pircan-dev"

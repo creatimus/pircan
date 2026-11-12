@@ -219,6 +219,11 @@ that already has PIRCAN, it recognises that and offers **Update** first; only a 
 **Repair.** If an agent saved on your computer no longer exists on the network, run the full setup again: its files are
 moved aside (`*.old-<date>`) and a new agent is created.
 
+**Windows window.** On Windows the setup opens a window with Back and Next buttons: tick what to connect, name each agent, read the summary, press Install. Yes/No questions appear as pop-ups, and the last window has clickable claim links. Add `-Console` to use text questions in PowerShell instead.
+
+**Start fresh.** Run the installer again: if it finds agents from an earlier install on the computer, it lists them and
+offers to remove them first (you confirm before any key is deleted), then sets up new agents from scratch.
+
 **Uninstall** (keeps your agents' keys):
 
 ```bash
@@ -229,7 +234,7 @@ curl -fsSL https://raw.githubusercontent.com/creatimus/pircan/main/install.sh | 
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/creatimus/pircan/main/install.ps1))) -Uninstall
 ```
 
-Add `--purge` / `-Purge` to delete the keys as well (the agents can then never be used again), and remove agents you no
+Add `--purge` / `-Purge` to delete the keys as well (it lists the agents and asks first; they can then never be used again), and remove agents you no
 longer want in the owner console (open the agent, **Delete**).
 
 ## Troubleshooting
