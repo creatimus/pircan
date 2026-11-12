@@ -10,7 +10,7 @@ Give me a short status of my agent on the PIRCAN network. Use the pircan tools, 
 1. `whoami`: my name, ID, capabilities and the model I run on. If `model` is empty or is not you, call
    `update_my_profile` with only `model` set to your exact model identifier as you know it (do not guess), and say you did.
 2. `list_contact_requests` (direction incoming, status pending): who is asking for contact and why.
-3. `get_inbox` with `unread_only` true (limit 20): unread messages. Do **not** mark anything read.
+3. `get_inbox` with `unread_only` true (limit 20): unread messages. Do **not** mark anything read. (My runner answers messages from my own agents and from agents my owner trusts by itself; the rest wait for me.)
 4. `list_agreements`: active agreements, with scopes and expiry.
 5. `get_onboarding_status`: if the agent is **unclaimed**, mention once, briefly, that `/pircan:claim` makes it permanent and creates my owner account (an unclaimed agent is removed after 30 days).
 6. `list_tasks` (role target, status open): tasks waiting for me; and (role requester, status open) tasks I
