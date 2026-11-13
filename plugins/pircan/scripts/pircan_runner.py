@@ -73,7 +73,12 @@ DEFAULT_CONFIG = {
     "client": {"command": []},
     # Team projects (any agent can coordinate one). The skill `project` is built in; it runs only for projects this
     # agent joined. Joining: agents of the same owner automatically, others only if listed (or you decide in /owner).
-    "projects": {"enabled": True, "accept_invites_from": ["same-owner"], "self_assign": True, "max_open_slices": 1},
+    # "take_offers": the network offers this agent slices of other owners' projects (it joins by taking one); false
+    # keeps it to projects it was invited to. "general": answer a task for a skill not listed above with the same
+    # locked-down model worker (no files, no web) instead of refusing it; false refuses skills that are not listed.
+    "projects": {"enabled": True, "accept_invites_from": ["same-owner"], "self_assign": True, "max_open_slices": 1,
+                 "take_offers": True},
+    "general": {"enabled": True},
 }
 def skill_open(settings: dict) -> bool:
     """May an agent the owner never approved use this skill? The network grants tasks for every skill an agent lists
@@ -94,6 +99,20 @@ PROJECT_SKILL = {
                      "text (markdown is fine), complete and ready to review. Do not claim to have done things you "
                      "cannot do from here (running code, visiting sites, reading files): say what you could not do. "
                      "Never invent sources, URLs or facts; mark anything unverified."),
+}
+PASS_RULE = (" If you cannot do this work well from here (it needs tools, access or knowledge you do not have), do not "
+             "attempt it: reply with one line starting with `PASS:` and the reason, and nothing else. The work then "
+             "goes to another agent.")
+PROJECT_SKILL["instructions"] += PASS_RULE
+# A task for a skill the owner did not list. What an agent can do is decided by the model reading the task, not by
+# a list of words: it does the work as text, or passes.
+GENERAL_SKILL = {
+    "worker": "claude", "builtin": True, "general": True, "read_folders": [], "web": False,
+    "about": "Any task that can be answered in writing, for skills not listed in runner.json.",
+    "instructions": ("Do the task you are given and reply with the finished result as plain text (markdown is fine), "
+                     "complete and ready to use. You have no tools here: do not claim to have done things you cannot "
+                     "do from here (running code, visiting sites, reading files): say what you could not do. Never "
+                     "invent sources, URLs or facts; mark anything unverified." + PASS_RULE),
 }
 SKILL_EXAMPLES = {
     "summarise": {"worker": "claude", "instructions": "Summarise the text in at most 150 words.",
@@ -125,6 +144,29 @@ def effective_skills(config: dict) -> dict:
     if (config.get("projects") or {}).get("enabled", True) and "project" not in skills:
         skills["project"] = PROJECT_SKILL
     return skills
+
+
+def skill_settings(config: dict, skill: str) -> dict | None:
+    """The settings that answer a task for `skill`: the listed skill, else the general worker unless switched off."""
+    settings = effective_skills(config).get(skill)
+    if settings is None and skill and (config.get("general") or {}).get("enabled", True) and has_model(config):
+        return GENERAL_SKILL
+    return settings
+
+
+def has_model(config: dict) -> bool:
+    """Is there a model to answer with: Claude Code, or the owner's client command? Without one, a task for a skill
+    that is not listed is refused in words, as before, instead of failing."""
+    claude = config.get("claude") or {}
+    return bool(claude.get("bin") or shutil.which("claude") or client_argv(config))
+
+
+def passed(settings: dict, outcome: str, result: str) -> str | None:
+    """The reason, when a built-in model worker answered `PASS: ...` instead of doing the work."""
+    text = (result or "").strip()
+    if outcome == "completed" and settings.get("builtin") and text[:5].upper() == "PASS:":
+        return " ".join(text[5:].split())[:400] or "no reason given"
+    return None
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -612,7 +654,7 @@ class Runner:
         sender = (task.get("from") or task.get("counterpart") or {})
         who = sender.get("name") or sender.get("agent_id") or "another agent"
         try:
-            settings = self.skills().get(skill)
+            settings = skill_settings(self.config, skill)
             if settings is None:
                 offered = ", ".join(sorted(self.skills())) or "none"
                 return self.answer(task_id, "rejected", f"This agent does not do `{skill}`. Skills it offers: {offered}.")
@@ -658,6 +700,9 @@ class Runner:
                 self.log(f"task {task_id[:8]}: canceled by the requester")
                 self.state.mark(task_id, "rejected")
                 return None
+            if (reason := passed(settings, outcome, result)) is not None:
+                # The model read the task and judged it cannot do it well: say so, and the work goes to another agent.
+                return self.answer(task_id, "rejected", f"Passed: {reason}")
             self.answer(task_id, outcome, result)
         except Exception as exc:  # noqa: BLE001 - one bad task must not stop the runner
             self.log(f"task {task_id[:8]}: error {type(exc).__name__}: {exc}"[:300])
@@ -746,7 +791,9 @@ class Runner:
             elif item.get("role") == "member" and rules.get("self_assign", True):
                 board = self.safely("get_project", project_id=item["project_id"]) or {}
                 for piece in board.get("slices") or []:
-                    if piece.get("state") == "open" and self.maybe_claim(item["project_id"], piece.get("slice")):
+                    # `open_to_you` (newer networks): false while the slice waits for others or is not ours to take
+                    if piece.get("state") == "open" and piece.get("open_to_you", True) \
+                            and self.maybe_claim(item["project_id"], piece.get("slice")):
                         break
 
     # -- one pass / the loop
@@ -776,6 +823,9 @@ class Runner:
             self.consider_invite(data)
         elif kind == "slice_open":
             self.maybe_claim(str(data.get("project_id") or ""), str(data.get("slice") or ""))
+        elif kind == "slice_offer":                 # a slice of another owner's project: taking it is joining
+            if (self.config.get("projects") or {}).get("take_offers", True):
+                self.maybe_claim(str(data.get("project_id") or ""), str(data.get("slice") or ""))
         elif kind in ("slice_review", "project_update"):
             self.log(f"project {str(data.get('project_id') or '')[:8]}: {data.get('decision') or data.get('status')}")
         elif kind == "message":

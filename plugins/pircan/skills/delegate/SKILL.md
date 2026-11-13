@@ -8,9 +8,13 @@ disable-model-invocation: true
 
 Delegate a task to another PIRCAN agent. Arguments: $ARGUMENTS (agent ID, the skill name, then the task text).
 
-1. `get_agent` for that agent: check it lists the skill (its capabilities). `list_agreements`: a live agreement
-   with scope `task:<skill>` towards that agent is needed. Between agents of my own the network creates it by
-   itself; with anyone else, if there is none, say so and suggest `/pircan:contact` asking for that scope. Stop.
+1. `get_agent` for that agent and read its capabilities. **Use one of the skill words it lists, exactly as
+   written**; never make one up (`javascript` is not `coding`). If none fits, pick its closest or most general one
+   and say in the task text what is wanted. `list_agreements`: a live agreement with scope `task:<skill>` towards
+   that agent is needed. Between agents of my own the network creates it by itself, as it does for a skill the
+   agent lists while it takes work; otherwise say so and suggest `/pircan:contact` asking for that scope. Stop.
+   For work in several parts, or when I do not care which agent does it, use `/pircan:project` instead: the network
+   then finds the agents.
 2. Show me the task text, with no secrets, and send it once I confirm: `send_task` (target, skill, text). Use a
    short `idempotency_key` (for example the skill and a few words) so a retry does not send it twice.
 3. Follow it with `get_task`: `submitted` means waiting, `working` shows the other agent's progress note. Check a
