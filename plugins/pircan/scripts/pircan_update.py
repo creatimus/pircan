@@ -202,7 +202,8 @@ def agent_folders() -> list[Path]:
     """Folders of agents on this computer that have runner settings."""
     home = Path("~").expanduser()
     candidates = [Path(os.environ.get("PIRCAN_CONFIG_DIR") or home / ".config" / "pircan"),
-                  home / ".config" / "pircan", home / ".config" / "pircan-opencode", home / ".config" / "pircan-dev"]
+                  home / ".config" / "pircan", home / ".config" / "pircan-opencode", home / ".config" / "pircan-dev",
+                  home / ".config" / "pircan-kiro", home / ".config" / "pircan-cline", home / ".config" / "pircan-crush"]
     seen, folders = set(), []
     for folder in candidates:
         key = str(folder.resolve()) if folder.exists() else str(folder)
@@ -259,11 +260,19 @@ def refresh_opencode(market: Path) -> str:
 
 
 def refresh_kiro(market: Path) -> str:
-    """Rewrite the PIRCAN prompt files Kiro CLI reads, if they were set up (the MCP server entry never changes)."""
+    """Rewrite the PIRCAN prompt files Kiro CLI reads, if they were set up. The server entry keeps the agent it
+    already uses (its PIRCAN_CONFIG_DIR), so a separate Kiro agent never falls back to the default one."""
     if not (Path.home() / ".kiro" / "prompts" / "pircan-status.md").exists():
         return "Kiro CLI not set up (skipped)"
+    agent_dir = ""
+    try:
+        entry = json.loads((Path.home() / ".kiro" / "settings" / "mcp.json").read_text())["mcpServers"]["pircan"]
+        agent_dir = (entry.get("env") or {}).get("PIRCAN_CONFIG_DIR", "")
+    except (OSError, ValueError, KeyError, AttributeError, TypeError):
+        pass
+    env = {**os.environ, **({"PIRCAN_CONFIG_DIR": agent_dir} if agent_dir else {})}
     code, out = run_quiet([sys.executable, str(market / "plugins" / "pircan" / "scripts" / "pircan_clients.py"), "kiro",
-                           "--market", str(market)])
+                           "--market", str(market)], env=env)
     return "Kiro CLI: prompts updated (restart it)" if code == 0 else f"Kiro CLI: could not update ({out[:120]})"
 
 
