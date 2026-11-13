@@ -30,6 +30,7 @@ CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 MARKET="$HOME_DIR/marketplace"
 AGENT_ID=""; AGENT_NAME=""; AGENT_DESC=""; AGENT_CAPS=""; REGISTER=1; ASSUME_YES=0; USE_CLAUDE=1; PROFILE=0; UNINSTALL=0; PURGE=0; RUNNER=""
 SET_OPENCODE=0; SET_RUNNER=0; UPDATE=0
+FORCE_KIRO=""; FORCE_CLINE=""; FORCE_CRUSH=""          # empty: set up when the command is found
 SOURCE="${PIRCAN_SOURCE:-github}"; [ "$SOURCE" = github ] || SOURCE=site     # anything but "github" means this network's website
 RELEASE_URL="${PIRCAN_RELEASE_URL:-https://github.com/creatimus/pircan/releases/latest/download}"
 
@@ -65,6 +66,8 @@ Options:
   --yes           ask nothing: connect the apps it finds, with one agent
   --opencode      set up OpenCode even if the opencode command is not found (it is set up automatically when found)
   --no-opencode   do not set up OpenCode
+  --kiro, --cline, --crush   set up Kiro CLI, Cline CLI or Crush even if its command is not found (each is set up
+                  automatically when found; they share the first agent). --no-kiro, --no-cline, --no-crush skip one
   --no-claude     do not set up Claude Code (only download and unpack)
   --runner        keep the agent connected in the background so it answers tasks on its own (see runner.json)
   --profile       add a line to your shell profile that loads your PIRCAN settings
@@ -91,6 +94,12 @@ while [ $# -gt 0 ]; do
     --no-claude) USE_CLAUDE=0 ;;
     --opencode) OPENCODE=1; SET_OPENCODE=1 ;;
     --no-opencode) OPENCODE=0; SET_OPENCODE=1 ;;
+    --kiro) FORCE_KIRO=1 ;;
+    --no-kiro) FORCE_KIRO=0 ;;
+    --cline) FORCE_CLINE=1 ;;
+    --no-cline) FORCE_CLINE=0 ;;
+    --crush) FORCE_CRUSH=1 ;;
+    --no-crush) FORCE_CRUSH=0 ;;
     --profile) PROFILE=1 ;;
     --runner) RUNNER=1; SET_RUNNER=1 ;;
     --update) UPDATE=1 ;;
@@ -299,6 +308,9 @@ good "$(python3 -c 'import platform; print("Python " + platform.python_version()
 if claude_ok; then good "Claude Code found: $($CLAUDE_BIN --version 2>/dev/null | head -1)"
 elif [ "$USE_CLAUDE" = 1 ]; then say "  Claude Code was not found. The files will still be prepared; install Claude Code, then run the two commands shown at the end."; fi
 if have opencode; then good "OpenCode found"; fi
+if have kiro-cli; then good "Kiro CLI found"; fi
+if have cline; then good "Cline CLI found"; fi
+if have crush; then good "Crush found"; fi
 
 # ---- update an existing install ---------------------------------------------------------------------------------------
 # An install that is already here is updated, not set up again: no questions, and nothing of yours is touched
@@ -347,22 +359,31 @@ fi
 # ---- 2. what to connect (guided) -----------------------------------------------------------------------------------
 # Defaults without questions: Claude Code if found (or asked for), OpenCode if found, one agent for both.
 WANT_CLAUDE=0; WANT_OPENCODE=0; WANT_APP=0; WANT_DEV=0; SEPARATE=0
+auto_want() { if [ -n "$1" ]; then echo "$1"; elif have "$2"; then echo 1; else echo 0; fi; }
+WANT_KIRO="$(auto_want "$FORCE_KIRO" kiro-cli)"; WANT_CLINE="$(auto_want "$FORCE_CLINE" cline)"; WANT_CRUSH="$(auto_want "$FORCE_CRUSH" crush)"
 [ "$USE_CLAUDE" = 1 ] && WANT_CLAUDE=1
 if [ "$SET_OPENCODE" = 1 ]; then WANT_OPENCODE="$OPENCODE"; elif have opencode; then WANT_OPENCODE=1; fi
 if [ "$INTERACTIVE" = 1 ] && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ]; then
   step "2. What do you want to connect?"
   default=""; if claude_ok; then default="1"; fi; if have opencode; then default="$default 2"; fi
+  if have kiro-cli; then default="$default 5"; fi; if have cline; then default="$default 6"; fi; if have crush; then default="$default 7"; fi
   default="$(printf '%s' "${default:-1}" | sed 's/^ //')"
   label_claude="Claude Code   (terminal and editors)"; if claude_ok; then label_claude="$label_claude  ✓ installed"; fi
   label_open="OpenCode      (terminal)"; if have opencode; then label_open="$label_open  ✓ installed"; fi
   CHOICES="$(choose "Pick one or more" "$default" "$label_claude" "$label_open" \
              "Claude app or claude.ai   (nothing to install here: you add a connector)" \
-             "Your own code   (developer mode: Python SDK and an example agent)")"
-  WANT_CLAUDE=0; WANT_OPENCODE=0
+             "Your own code   (developer mode: Python SDK and an example agent)" \
+             "Kiro CLI        (terminal; shares the first agent)$(have kiro-cli && echo '  ✓ installed')" \
+             "Cline CLI       (terminal; shares the first agent)$(have cline && echo '  ✓ installed')" \
+             "Crush           (terminal; shares the first agent)$(have crush && echo '  ✓ installed')")"
+  WANT_CLAUDE=0; WANT_OPENCODE=0; WANT_KIRO=0; WANT_CLINE=0; WANT_CRUSH=0
   if picked "$CHOICES" 1; then WANT_CLAUDE=1; fi
   if picked "$CHOICES" 2; then WANT_OPENCODE=1; fi
   if picked "$CHOICES" 3; then WANT_APP=1; fi
   if picked "$CHOICES" 4; then WANT_DEV=1; fi
+  if picked "$CHOICES" 5; then WANT_KIRO=1; fi
+  if picked "$CHOICES" 6; then WANT_CLINE=1; fi
+  if picked "$CHOICES" 7; then WANT_CRUSH=1; fi
   # Offer the apps that are missing, with their makers' own installers.
   if [ "$WANT_CLAUDE" = 1 ] && ! claude_ok; then
     say "Claude Code is not installed. Anthropic's installer:"; link "curl -fsSL https://claude.ai/install.sh | bash"
@@ -386,9 +407,14 @@ if [ "$INTERACTIVE" = 1 ] && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ]; then
   # One step for each agent that will be created, in order. Each asks for a name, what the agent does and its skills.
   STEP_N=3
   MAIN_LABEL=""
+  EXTRA_LABEL=""
+  if [ "$WANT_KIRO" = 1 ]; then EXTRA_LABEL="Kiro CLI"; fi
+  if [ "$WANT_CLINE" = 1 ]; then EXTRA_LABEL="${EXTRA_LABEL:+$EXTRA_LABEL and }Cline CLI"; fi
+  if [ "$WANT_CRUSH" = 1 ]; then EXTRA_LABEL="${EXTRA_LABEL:+$EXTRA_LABEL and }Crush"; fi
   if [ "$WANT_CLAUDE" = 1 ] && [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 0 ]; then MAIN_LABEL="shared Claude Code and OpenCode"
   elif [ "$WANT_CLAUDE" = 1 ]; then MAIN_LABEL="Claude Code"
-  elif [ "$WANT_OPENCODE" = 1 ]; then MAIN_LABEL="OpenCode"; fi
+  elif [ "$WANT_OPENCODE" = 1 ]; then MAIN_LABEL="OpenCode"
+  elif [ -n "$EXTRA_LABEL" ]; then MAIN_LABEL="$EXTRA_LABEL"; fi
   if [ -n "$MAIN_LABEL" ] && [ -z "$AGENT_NAME$AGENT_DESC$AGENT_CAPS" ]; then
     step "$STEP_N. Your $MAIN_LABEL agent"
     dim "  Other agents see this. You can change all of it later in the owner console."
@@ -403,7 +429,7 @@ if [ "$INTERACTIVE" = 1 ] && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ]; then
     step "$STEP_N. Your developer-mode agent"
     ask_agent DEV "developer-mode"; STEP_N=$((STEP_N + 1))
   fi
-  if [ "$SET_RUNNER" = 0 ] && [ "$WANT_CLAUDE$WANT_OPENCODE$WANT_DEV" != 000 ]; then
+  if [ "$SET_RUNNER" = 0 ] && [ "$WANT_CLAUDE$WANT_OPENCODE$WANT_DEV$WANT_KIRO$WANT_CLINE$WANT_CRUSH" != 000000 ]; then
     step "$STEP_N. Keep it connected?"
     dim "  The runner keeps your agent online in the background and answers tasks for the skills you allow"
     dim "  (only a safe test skill, echo, until you add more). It uses no AI model while it waits."
@@ -412,6 +438,9 @@ if [ "$INTERACTIVE" = 1 ] && [ -z "$AGENT_ID" ] && [ "$REGISTER" = 1 ]; then
   step "$((STEP_N + 1)). Ready to install"
   if [ "$WANT_CLAUDE" = 1 ]; then good "Claude Code: the PIRCAN plugin, and an agent"; fi
   if [ "$WANT_OPENCODE" = 1 ]; then good "OpenCode: PIRCAN commands and tools, $([ "$SEPARATE" = 1 ] && echo "with its own agent" || echo "sharing the same agent")"; fi
+  if [ "$WANT_KIRO" = 1 ]; then good "Kiro CLI: PIRCAN tools and @pircan-* prompts, sharing the first agent"; fi
+  if [ "$WANT_CLINE" = 1 ]; then good "Cline CLI: PIRCAN tools, sharing the first agent"; fi
+  if [ "$WANT_CRUSH" = 1 ]; then good "Crush: PIRCAN tools, sharing the first agent"; fi
   if [ "$WANT_APP" = 1 ]; then good "Claude app or claude.ai: how to add the connector (shown at the end)"; fi
   if [ "$WANT_DEV" = 1 ]; then good "Developer mode: the Python SDK, an agent and an example program"; fi
   if [ "${RUNNER:-0}" = 1 ]; then good "The runner, in the background"; fi
@@ -503,8 +532,9 @@ if [ -n "$AGENT_ID" ]; then
   fi
   say "Saved the settings for agent $AGENT_ID."
 elif [ "$REGISTER" = 1 ]; then
-  if [ "$WANT_CLAUDE" = 1 ] || [ "$INTERACTIVE" = 0 ] || { [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 0 ]; }; then
-    create_agent "$CONFIG_DIR" "$([ "$WANT_CLAUDE" = 1 ] || [ "$INTERACTIVE" = 0 ] && echo "Claude Code" || echo "OpenCode")" "$MAIN_NAME" "$MAIN_DESC" "$MAIN_CAPS"
+  if [ "$WANT_CLAUDE" = 1 ] || [ "$INTERACTIVE" = 0 ] || { [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 0 ]; } \
+     || [ "$WANT_KIRO$WANT_CLINE$WANT_CRUSH" != 000 ]; then
+    create_agent "$CONFIG_DIR" "$([ "$WANT_CLAUDE" = 1 ] || [ "$INTERACTIVE" = 0 ] && echo "Claude Code" || { [ "$WANT_OPENCODE" = 1 ] && echo "OpenCode" || echo "${EXTRA_LABEL:-Kiro CLI}"; })" "$MAIN_NAME" "$MAIN_DESC" "$MAIN_CAPS"
   fi
   if [ "$WANT_OPENCODE" = 1 ] && [ "$SEPARATE" = 1 ]; then
     create_agent "$OPEN_DIR" "OpenCode" "$OPEN_NAME" "$OPEN_DESC" "$OPEN_CAPS"
@@ -528,6 +558,14 @@ if [ "$OPENCODE" = 1 ]; then
   step "Setting up OpenCode"
   PIRCAN_CONFIG_DIR="$OPEN_DIR" python3 "$SCRIPTS/pircan_opencode.py" --market "$MARKET" || say "OpenCode setup did not finish; the rest is installed."
 fi
+
+for pair in "kiro:$WANT_KIRO:Kiro CLI" "cline:$WANT_CLINE:Cline CLI" "crush:$WANT_CRUSH:Crush"; do
+  client="${pair%%:*}"; rest="${pair#*:}"; want="${rest%%:*}"; label="${rest#*:}"
+  if [ "$want" = 1 ]; then
+    step "Setting up $label"
+    PIRCAN_CONFIG_DIR="$CONFIG_DIR" python3 "$SCRIPTS/pircan_clients.py" "$client" --market "$MARKET" || say "$label setup did not finish; the rest is installed."
+  fi
+done
 
 DEV_NOTE=""
 if [ "$WANT_DEV" = 1 ] && [ -f "$DEV_DIR/agent.json" ]; then
@@ -582,7 +620,7 @@ NAME="$(agent_name "$CONFIG_DIR")"
 if [ -n "$NAME" ]; then say "Your agent \"$NAME\" is ready."; fi
 if [ "$SEPARATE" = 1 ] && [ -f "$OPEN_DIR/agent.json" ]; then say "Your OpenCode agent \"$(agent_name "$OPEN_DIR")\" is ready."; fi
 if [ "$WANT_DEV" = 1 ] && [ -f "$DEV_DIR/agent.json" ]; then say "Your developer agent \"$(agent_name "$DEV_DIR")\" is ready."; fi
-if ! claude_ok && [ "$OPENCODE" = 0 ] && [ "$WANT_APP$WANT_DEV" = 00 ]; then
+if ! claude_ok && [ "$OPENCODE" = 0 ] && [ "$WANT_APP$WANT_DEV$WANT_KIRO$WANT_CLINE$WANT_CRUSH" = 00000 ]; then
   say ""
   say "No Claude Code or OpenCode was found on this computer. Your agent is ready anyway:"
   say "  - install Claude Code (https://claude.com/claude-code) or OpenCode (https://opencode.ai), then run this installer"
@@ -630,6 +668,11 @@ fi
 if [ "$OPENCODE" = 1 ]; then
   say "     OpenCode: restart it, then type /pircan-status (also /pircan-find, /pircan-contact, /pircan-delegate)."
 fi
+if [ "$WANT_KIRO" = 1 ]; then
+  say "     Kiro CLI: restart it, then type @pircan-status (also @pircan-find, @pircan-inbox). If it asks you to sign in, do."
+fi
+if [ "$WANT_CLINE" = 1 ]; then say "     Cline CLI: restart it, then ask: use the PIRCAN tool whoami."; fi
+if [ "$WANT_CRUSH" = 1 ]; then say "     Crush: restart it, then ask: use the PIRCAN tool whoami."; fi
 if [ "$WANT_APP" = 1 ] || [ "$INTERACTIVE" = 0 ]; then
   say "     Claude app or claude.ai: Customize > Connectors > add a custom connector with the address"
   link "$BASE/mcp"

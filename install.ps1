@@ -22,12 +22,12 @@ function Install-Pircan {
     $UserAgent = 'pircan-installer/0.5 (Windows PowerShell)'
 
     # ---- options ---------------------------------------------------------------------------------------------------
-    $opt = @{ Yes = $false; Update = $false; FromGithub = $false; FromSite = $false; OpenCode = $false; NoOpenCode = $false; Runner = $false; NoClaude = $false; NoRegister = $false
+    $opt = @{ Yes = $false; Update = $false; FromGithub = $false; FromSite = $false; OpenCode = $false; NoOpenCode = $false; Kiro = $false; Cline = $false; Crush = $false; Runner = $false; NoClaude = $false; NoRegister = $false
               Uninstall = $false; Purge = $false; Help = $false; Console = $false; Name = ''; Description = ''; Capabilities = ''; ConfigDir = '' }
     for ($i = 0; $i -lt $args.Count; $i++) {
         $a = [string]$args[$i]
         switch -Regex ($a) {
-            '^-(Yes|Update|FromGithub|FromSite|OpenCode|NoOpenCode|Runner|NoClaude|NoRegister|Uninstall|Purge|Console|Help)$' { $opt[$Matches[1]] = $true; continue }
+            '^-(Yes|Update|FromGithub|FromSite|OpenCode|NoOpenCode|Kiro|Cline|Crush|Runner|NoClaude|NoRegister|Uninstall|Purge|Console|Help)$' { $opt[$Matches[1]] = $true; continue }
             '^-(Name|Description|Capabilities|ConfigDir)$' {
                 if ($i + 1 -ge $args.Count) { throw "$a needs a value." }
                 $opt[$Matches[1]] = [string]$args[$i + 1]; $i++; continue }
@@ -126,7 +126,7 @@ function Install-Pircan {
         Say "  irm $Base/install.ps1 | iex                    guided setup"
         Say "  & ([scriptblock]::Create((irm $Base/install.ps1))) -Update     update an existing install (no questions)"
         Say "  & ([scriptblock]::Create((irm $Base/install.ps1))) -Yes -OpenCode -Name myagent"
-        Say 'Options: -Yes -Update -FromGithub -FromSite -OpenCode -NoOpenCode -Runner -ConfigDir -Name -Description -Capabilities -NoClaude -NoRegister -Uninstall [-Purge] -Console -Help'
+        Say 'Options: -Yes -Update -FromGithub -FromSite -OpenCode -NoOpenCode -Kiro -Cline -Crush -Runner -ConfigDir -Name -Description -Capabilities -NoClaude -NoRegister -Uninstall [-Purge] -Console -Help'
         return
     }
 
@@ -869,6 +869,16 @@ function Install-Pircan {
         $env:PIRCAN_CONFIG_DIR = $OpenDir
         Native { & $Python (Join-Path $scripts 'pircan_opencode.py') --market $Market }
         if ($LASTEXITCODE -ne 0) { Say 'OpenCode setup did not finish; the rest is installed.' }
+    }
+    # Kiro CLI, Cline CLI and Crush share the first agent. Set up when asked for (-Kiro -Cline -Crush) or found.
+    foreach ($c in @(@('kiro', 'Kiro CLI', 'kiro-cli', $opt.Kiro), @('cline', 'Cline CLI', 'cline', $opt.Cline), @('crush', 'Crush', 'crush', $opt.Crush))) {
+        $found = $null -ne (Get-Command $c[2] -ErrorAction SilentlyContinue)
+        if (($c[3] -or $found) -and (Test-Path (Join-Path $Config 'agent.json'))) {
+            Step ('Setting up ' + $c[1])
+            $env:PIRCAN_CONFIG_DIR = $Config
+            Native { & $Python (Join-Path $scripts 'pircan_clients.py') $c[0] --market $Market }
+            if ($LASTEXITCODE -ne 0) { Say ($c[1] + ' setup did not finish; the rest is installed.') }
+        }
     }
     $DevNote = ''
     if ($WantDev -and (Test-Path (Join-Path $DevDir 'agent.json'))) {

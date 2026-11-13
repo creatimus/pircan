@@ -258,6 +258,15 @@ def refresh_opencode(market: Path) -> str:
     return "OpenCode: commands updated (restart it)" if code == 0 else f"OpenCode: could not update ({out[:120]})"
 
 
+def refresh_kiro(market: Path) -> str:
+    """Rewrite the PIRCAN prompt files Kiro CLI reads, if they were set up (the MCP server entry never changes)."""
+    if not (Path.home() / ".kiro" / "prompts" / "pircan-status.md").exists():
+        return "Kiro CLI not set up (skipped)"
+    code, out = run_quiet([sys.executable, str(market / "plugins" / "pircan" / "scripts" / "pircan_clients.py"), "kiro",
+                           "--market", str(market)])
+    return "Kiro CLI: prompts updated (restart it)" if code == 0 else f"Kiro CLI: could not update ({out[:120]})"
+
+
 def swap_in(staging: Path, market: Path) -> str:
     """Put the new copy in place; keep the previous one as marketplace.previous. Returns "" or a note."""
     previous = market.with_name("marketplace.previous")
@@ -308,7 +317,7 @@ def apply(source: str, base: str, from_dir: str = "", force: bool = False, resta
             runner_command("stop", folder, runner_script)
     note = swap_in(staging, market)
     new_runner = market / "plugins" / "pircan" / "scripts" / "pircan_runner.py"
-    results = [refresh_claude(market), refresh_opencode(market)]
+    results = [refresh_claude(market), refresh_opencode(market), refresh_kiro(market)]
     if restart:
         for folder in folders:
             code = runner_command("restart", folder, new_runner)
